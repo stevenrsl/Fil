@@ -2,7 +2,7 @@
 
 Client macOS de transferts distants, pensé pour être plus direct, calme et rapide que Cyberduck : choisir une connexion, voir les fichiers, lancer un transfert, fermer la fenêtre.
 
-> **V0.** Utilisable, mais jeune. Les transferts interrompus repartent de zéro et la file ne survit pas à la fermeture de l'application. Voir [docs/NEXT.md](docs/NEXT.md).
+> **V0.** Utilisable, mais jeune. Les envois sont atomiques (le fichier en ligne n'est jamais écrit à moitié) et « Réessayer » reprend un transfert interrompu ; en revanche la file ne survit pas à la fermeture de l'application. Voir [docs/NEXT.md](docs/NEXT.md).
 
 ## Protocoles
 

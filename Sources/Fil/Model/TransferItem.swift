@@ -30,6 +30,12 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
     public var completedFiles: Int
     public var startedAt: Date?
     public var finishedAt: Date?
+    /// Octets déjà en place quand ce passage a démarré : la reprise ne compte pas dans le débit.
+    public var resumedFrom: Int64?
+    /// Ce que l'utilisateur doit savoir à la fin (envoi direct faute de renommage possible).
+    public var notice: String?
+    /// Après un échec : ce que « Réessayer » va reprendre.
+    public var resumeNote: String?
 
     public init(id: UUID = UUID(), direction: Direction, name: String, isFolder: Bool, connectionName: String, remotePath: RemotePath, localURL: URL, totalBytes: Int64? = nil) {
         self.id = id
@@ -62,8 +68,9 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
     public func rate(now: Date) -> Double? {
         guard let startedAt, state == .running else { return nil }
         let elapsed = now.timeIntervalSince(startedAt)
-        guard elapsed >= 1, transferredBytes > 0 else { return nil }
-        return Double(transferredBytes) / elapsed
+        let moved = transferredBytes - (resumedFrom ?? 0)
+        guard elapsed >= 1, moved > 0 else { return nil }
+        return Double(moved) / elapsed
     }
 
     public func remaining(now: Date) -> TimeInterval? {
@@ -81,6 +88,7 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
             return direction == .download ? "Inventaire du dossier distant…" : "Inventaire du dossier…"
         case .running:
             var parts: [String] = []
+            if let resumedFrom, resumedFrom > 0 { parts.append("Reprise à \(Format.bytes(resumedFrom))") }
             if isFolder, let fileCount {
                 parts.append("\(Format.count(min(completedFiles + 1, fileCount))) sur \(Format.files(fileCount))")
             }
@@ -96,14 +104,15 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
             return parts.joined(separator: " · ")
         case .done:
             let size = totalBytes.map { " · \(Format.bytes($0))" } ?? ""
+            let extra = notice.map { " · \($0)" } ?? ""
             switch direction {
             case .download:
                 let folder = FileManager.default.displayName(atPath: localURL.deletingLastPathComponent().path)
-                return "Téléchargé dans « \(folder) »\(size)"
-            case .upload: return "Envoyé dans « \(remotePath.parent?.name ?? "/") »\(size)"
+                return "Téléchargé dans « \(folder) »\(size)\(extra)"
+            case .upload: return "Envoyé dans « \(remotePath.parent?.name ?? "/") »\(size)\(extra)"
             }
         case .failed(let reason):
-            return reason
+            return reason + (resumeNote.map { " \($0)" } ?? "")
         case .cancelled:
             return "Annulé"
         }

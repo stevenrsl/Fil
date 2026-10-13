@@ -71,17 +71,16 @@ actor SFTPProvider: RemoteFileProvider {
         }
     }
 
-    nonisolated func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
+    nonisolated var canResumeUploads: Bool { true }
+
+    nonisolated func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let session = SFTPSession(channel: try await activeChannel())
         let handle = try await session.open(file.path, flags: [.read], subject: file.name)
         do {
-            guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-                throw ProviderError.server("Impossible de créer « \(destination.lastPathComponent) » sur ce Mac.")
-            }
-            let output = try FileHandle(forWritingTo: destination)
+            let output = try LocalFile.openForWriting(destination, resumingAt: offset)
             defer { try? output.close() }
-            var written: Int64 = 0
-            try await session.readAll(handle, subject: file.name) { data in
+            var written = offset
+            try await session.readAll(handle, from: UInt64(max(0, offset)), subject: file.name) { data in
                 try output.write(contentsOf: data)
                 written += Int64(data.count)
                 progress(written)
@@ -93,18 +92,56 @@ actor SFTPProvider: RemoteFileProvider {
         }
     }
 
-    nonisolated func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws {
+    nonisolated func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let session = SFTPSession(channel: try await activeChannel())
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
-        let handle = try await session.open(destination, flags: [.write, .create, .truncate], subject: destination.name)
+        // Sans troncature en reprise : les `offset` premiers octets restent, on réécrit à partir de là.
+        let flags: SFTPOpenFlags = offset > 0 ? [.write, .create] : [.write, .create, .truncate]
+        let handle = try await session.open(destination, flags: flags, subject: destination.name)
         do {
-            try await session.writeAll(handle, from: input, subject: destination.name, progress: progress)
+            try input.seek(toOffset: UInt64(max(0, offset)))
+            try await session.writeAll(handle, from: input, startingAt: UInt64(max(0, offset)), subject: destination.name, progress: progress)
             try await session.close(handle, subject: destination.name)
         } catch {
             try? await session.close(handle, subject: destination.name)
             throw error
         }
+    }
+
+    nonisolated func size(of path: RemotePath) async throws -> Int64? {
+        let session = SFTPSession(channel: try await activeChannel())
+        switch try await session.channel.call(.stat, { $0.string(path.value) }) {
+        case .attributes(let attributes):
+            return attributes.size.map { Int64($0) }
+        case .status(let status) where status.code == SFTPStatus.noSuchFile:
+            return nil
+        case .status(let status):
+            throw SFTPSession.error(for: status, subject: path.name)
+        default:
+            throw SFTPSession.unexpected
+        }
+    }
+
+    /// `posix-rename@openssh.com` écrase atomiquement. Les serveurs qui ne le connaissent pas
+    /// reçoivent un `RENAME` simple, puis la mise de côté de l'ancien fichier s'il refuse d'écraser.
+    nonisolated func move(_ source: RemotePath, to destination: RemotePath) async throws {
+        let session = SFTPSession(channel: try await activeChannel())
+        let atomic = try await session.channel.call(.extended) { writer in
+            writer.string("posix-rename@openssh.com")
+            writer.string(source.value)
+            writer.string(destination.value)
+        }
+        if case .status(let status) = atomic, status.code == SFTPStatus.ok { return }
+        try await moveReplacing(
+            source,
+            to: destination,
+            rename: { from, to in
+                try await session.expectOK(session.channel.call(.rename) { $0.string(from.value); $0.string(to.value) }, subject: to.name)
+            },
+            exists: { try await self.size(of: $0) != nil },
+            remove: { path in try await session.expectOK(session.channel.call(.remove) { $0.string(path.value) }, subject: path.name) }
+        )
     }
 
     nonisolated func makeDirectory(_ path: RemotePath) async throws {
@@ -217,10 +254,10 @@ struct SFTPSession: Sendable {
         try expectOK(await channel.call(.close) { $0.string(handle) }, subject: subject)
     }
 
-    /// Lit tout le fichier dans l'ordre, avec `SFTPProvider.window` lectures en vol.
-    func readAll(_ handle: Data, subject: String, consume: (Data) throws -> Void) async throws {
+    /// Lit le fichier dans l'ordre à partir de `start`, avec `SFTPProvider.window` lectures en vol.
+    func readAll(_ handle: Data, from start: UInt64 = 0, subject: String, consume: (Data) throws -> Void) async throws {
         let block = SFTPProvider.blockSize
-        var nextOffset: UInt64 = 0
+        var nextOffset: UInt64 = start
         var inFlight: [(offset: UInt64, length: UInt32, id: UInt32)] = []
         var reachedEnd = false
         defer { channel.abandon(inFlight.map(\.id)) }
@@ -270,10 +307,11 @@ struct SFTPSession: Sendable {
         }
     }
 
-    /// Écrit tout le fichier local, avec `SFTPProvider.window` écritures en vol.
-    func writeAll(_ handle: Data, from input: FileHandle, subject: String, progress: ProgressHandler) async throws {
-        var offset: UInt64 = 0
-        var acknowledged: Int64 = 0
+    /// Écrit le fichier local à partir de `start` (l'entrée est déjà positionnée), avec
+    /// `SFTPProvider.window` écritures en vol. La progression compte depuis le début du fichier.
+    func writeAll(_ handle: Data, from input: FileHandle, startingAt start: UInt64 = 0, subject: String, progress: ProgressHandler) async throws {
+        var offset: UInt64 = start
+        var acknowledged = Int64(start)
         var inFlight: [(id: UInt32, length: Int)] = []
         var exhausted = false
         defer { channel.abandon(inFlight.map(\.id)) }

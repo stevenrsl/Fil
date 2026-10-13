@@ -1,22 +1,44 @@
 import Foundation
 
-/// Octets déjà transférés pour le fichier en cours. Appelé depuis n'importe quel fil.
+/// Octets déjà transférés pour le fichier en cours, **depuis le début du fichier** (reprise comprise).
+/// Appelé depuis n'importe quel fil.
 public typealias ProgressHandler = @Sendable (Int64) -> Void
 
 /// Contrat commun à tous les protocoles. Aucun type de bibliothèque ne traverse cette frontière.
 /// L'annulation passe par l'annulation de la tâche Swift appelante.
 public protocol RemoteFileProvider: Sendable {
     var connection: RemoteConnection { get }
+    /// `true` si `upload(resumingAt:)` sait compléter un fichier distant déjà entamé.
+    /// Sinon, l'envoi repart de zéro et ne reçoit jamais de décalage.
+    var canResumeUploads: Bool { get }
     /// Ouvre la session et renvoie le dossier où commencer.
     func connect() async throws -> RemotePath
     func list(_ directory: RemotePath) async throws -> [RemoteFile]
-    /// Écrit le contenu à `destination`, créé ou remplacé.
-    func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws
-    /// Crée ou remplace le fichier distant `destination`.
-    func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws
+    /// Écrit le contenu à `destination`. Avec `offset` > 0, `destination` contient déjà les `offset`
+    /// premiers octets et le fournisseur complète. Un serveur qui ne sait pas reprendre est géré en
+    /// recommençant à zéro (fichier tronqué, progression repartie de 0) : le résultat reste juste.
+    func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws
+    /// Crée ou remplace le fichier distant `destination`. Avec `offset` > 0 (réservé aux fournisseurs
+    /// qui annoncent `canResumeUploads`), `destination` contient déjà les `offset` premiers octets.
+    func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws
+    /// Taille d'un fichier distant, `nil` s'il n'existe pas.
+    func size(of path: RemotePath) async throws -> Int64?
+    /// Renomme `source` en `destination`, qu'elle existe déjà ou non : le contenu précédent n'est
+    /// jamais perdu tant que le nouveau n'est pas en place.
+    func move(_ source: RemotePath, to destination: RemotePath) async throws
     func makeDirectory(_ path: RemotePath) async throws
     /// Supprime un fichier, ou un dossier avec tout son contenu.
     func delete(_ file: RemoteFile) async throws
+}
+
+extension RemoteFileProvider {
+    func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
+        try await download(file, to: destination, resumingAt: 0, progress: progress)
+    }
+
+    func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws {
+        try await upload(source, to: destination, resumingAt: 0, progress: progress)
+    }
 }
 
 public enum ProviderError: LocalizedError, Equatable, Sendable {
@@ -32,8 +54,18 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     case accessDenied(String)
     case alreadyExists(String)
     case connectionLost
+    /// Le transfert s'est terminé sans erreur mais il manque des octets.
+    case incomplete(name: String, received: Int64, expected: Int64)
     /// Message déjà formulé pour l'utilisateur.
     case server(String)
+
+    /// Coupure plutôt que refus : le fichier partiel reste valable, « Réessayer » peut reprendre.
+    public var isInterruption: Bool {
+        switch self {
+        case .connectionLost, .timedOut, .hostNotFound, .connectionRefused, .incomplete: true
+        default: false
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
@@ -61,6 +93,8 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
             "« \(name) » existe déjà ici."
         case .connectionLost:
             "La connexion au serveur s'est interrompue."
+        case .incomplete(let name, let received, let expected):
+            "« \(name) » n'est arrivé qu'en partie (\(Format.progress(received, of: expected)))."
         case .server(let message):
             message
         }
@@ -106,11 +140,14 @@ enum ReadableError {
 /// Placeholder explicite : aucun faux transfert ne doit être présenté comme réel.
 public actor PlannedProvider: RemoteFileProvider {
     public nonisolated let connection: RemoteConnection
+    public nonisolated let canResumeUploads = false
     public init(connection: RemoteConnection) { self.connection = connection }
     public func connect() async throws -> RemotePath { throw ProviderError.unavailable(connection.protocol) }
     public func list(_ directory: RemotePath) async throws -> [RemoteFile] { throw ProviderError.unavailable(connection.protocol) }
-    public func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws { throw ProviderError.unavailable(connection.protocol) }
-    public func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws { throw ProviderError.unavailable(connection.protocol) }
+    public func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws { throw ProviderError.unavailable(connection.protocol) }
+    public func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws { throw ProviderError.unavailable(connection.protocol) }
+    public func size(of path: RemotePath) async throws -> Int64? { throw ProviderError.unavailable(connection.protocol) }
+    public func move(_ source: RemotePath, to destination: RemotePath) async throws { throw ProviderError.unavailable(connection.protocol) }
     public func makeDirectory(_ path: RemotePath) async throws { throw ProviderError.unavailable(connection.protocol) }
     public func delete(_ file: RemoteFile) async throws { throw ProviderError.unavailable(connection.protocol) }
 }
@@ -161,4 +198,33 @@ func deleteTree(
         try await deleteTree(child, list: list, removeFile: removeFile, removeDirectory: removeDirectory)
     }
     try await removeDirectory(file.path)
+}
+
+/// Renomme en remplaçant, pour les protocoles dont le renommage refuse parfois d'écraser.
+/// Ordre voulu : essai direct ; sinon la cible est mise de côté (`.filbak`), la nouvelle prend sa
+/// place, puis l'ancienne est supprimée. Si la nouvelle ne peut pas prendre sa place, l'ancienne
+/// est rendue : on ne perd jamais le fichier en ligne parce qu'un renommage échoue.
+func moveReplacing(
+    _ source: RemotePath,
+    to destination: RemotePath,
+    rename: (RemotePath, RemotePath) async throws -> Void,
+    exists: (RemotePath) async throws -> Bool,
+    remove: (RemotePath) async throws -> Void
+) async throws {
+    do {
+        try await rename(source, destination)
+        return
+    } catch {
+        if error is CancellationError { throw error }
+        guard (try? await exists(destination)) == true else { throw error }
+        let backup = destination.parent.map { $0.appending(destination.name + ".filbak") } ?? RemotePath(destination.value + ".filbak")
+        try await rename(destination, backup)
+        do {
+            try await rename(source, destination)
+        } catch {
+            try? await rename(backup, destination)
+            throw error
+        }
+        try? await remove(backup)
+    }
 }

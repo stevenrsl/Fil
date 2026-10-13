@@ -48,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Fermer la fenêtre ne coupe pas les transferts : l'application reste ouverte.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        model.transfers.removeLocalPartials()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let active = model.transfers.activeCount
         guard active > 0 else { return .terminateNow }

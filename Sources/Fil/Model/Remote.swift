@@ -49,8 +49,10 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
     /// FTP, FTPS, SFTP : dossier d'arrivée, absolu ou relatif au dossier personnel (vide = dossier personnel).
     /// WebDAV, kDrive : racine WebDAV sur le serveur, au-dessus de laquelle on ne remonte pas (vide = `/`).
     public var path: String
+    /// FTP seulement : l'utilisateur a refusé qu'on lui propose FTPS pour ce serveur.
+    public var ftpsOfferDismissed: Bool
 
-    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .sftp, username: String = "", path: String = "") {
+    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .sftp, username: String = "", path: String = "", ftpsOfferDismissed: Bool = false) {
         self.id = id
         self.name = name
         self.host = host
@@ -58,10 +60,11 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
         self.protocol = `protocol`
         self.username = username
         self.path = path
+        self.ftpsOfferDismissed = ftpsOfferDismissed
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, `protocol`, username, path
+        case id, name, host, port, `protocol`, username, path, ftpsOfferDismissed
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +76,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? `protocol`.defaultPort
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        ftpsOfferDismissed = try container.decodeIfPresent(Bool.self, forKey: .ftpsOfferDismissed) ?? false
     }
 
     public static func defaultPort(for proto: RemoteProtocol) -> Int { proto.defaultPort }
@@ -125,6 +129,11 @@ public struct RemotePath: Hashable, Sendable, CustomStringConvertible {
     public var description: String { value }
 
     public func appending(_ relative: String) -> RemotePath { RemotePath(value + "/" + relative) }
+
+    /// Nom sous lequel un fichier est envoyé avant d'être renommé : `rapport.pdf` → `rapport.pdf.filpart`.
+    public var partialSibling: RemotePath {
+        (parent ?? .root).appending(name + ".filpart")
+    }
 
     /// Chemins successifs de la racine jusqu'à ce chemin compris.
     public var lineage: [RemotePath] {

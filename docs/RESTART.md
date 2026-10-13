@@ -2,7 +2,7 @@
 
 Ce document est destiné au prochain modèle ou développeur.
 
-## État actuel (12 octobre 2026)
+## État actuel (13 octobre 2026)
 
 Fil est utilisable : on choisit une connexion, on voit les fichiers, on télécharge et on envoie (fichiers et dossiers entiers), on ferme la fenêtre pendant que les transferts continuent.
 
@@ -19,14 +19,16 @@ Fil est utilisable : on choisit une connexion, on voit les fichiers, on téléch
 - `App/AppModel` pilote les phases ; `App/BrowserModel` la page fichiers ; `Transfer/TransferQueue` la file (deux transferts à la fois).
 - Les secrets passent par `SecretStore` (Keychain en production, mémoire dans les tests). Les favoris sont versionnés (`fil.favorites`, v2) et migrent depuis la v1.
 - Jetons visuels dans `Design/` : `Palette`, `TypeScale`, `Radius`, `Spacing`, composants.
-- Décisions du 12 octobre dans `DECISIONS.md` ; travail restant dans `NEXT.md`.
+- Les envois sont atomiques (`nom.filpart` puis renommage) et « Réessayer » reprend un transfert interrompu, dans la session. Voir `DECISIONS.md` (13 octobre) pour les garde-fous : on ne reprend que ce que Fil a écrit lui-même.
+- Un serveur FTP qui accepte aussi FTPS se voit proposer le passage, sur la page fichiers (`FTPSProbe`).
+- Décisions des 12 et 13 octobre dans `DECISIONS.md` ; travail restant dans `NEXT.md`.
 
 ## Commandes de vérification
 
 ```sh
 swift build
-swift test                      # 95 tests ; les 12 d'intégration sont ignorés sans serveurs
-Tools/integration-tests.sh      # lance les serveurs locaux, exécute les 12 tests d'intégration, arrête tout
+swift test                      # 131 tests ; les 15 d'intégration sont ignorés sans serveurs
+Tools/integration-tests.sh      # lance les serveurs locaux, exécute les 15 tests d'intégration, arrête tout
 swift run Fil
 Tools/bundle.sh                 # .build/Fil.app, signé ad hoc
 ```
@@ -35,16 +37,20 @@ Tools/bundle.sh                 # .build/Fil.app, signé ad hoc
 
 ## Prochaine tranche recommandée
 
-1. Reprise des transferts interrompus (`.filpart` conservé, `REST` / décalage / `Range`).
-2. Confirmation de l'empreinte SSH à la première connexion, épinglage des certificats auto-signés.
+1. Confirmation de l'empreinte SSH à la première connexion, épinglage des certificats auto-signés.
+2. Renommer et déplacer dans l'interface (les fournisseurs savent déjà `move`).
 3. Proton Drive par le CLI officiel, après vérification de sa surface.
-4. File de transferts persistante.
+4. File de transferts persistante, et la reprise entre deux sessions qui va avec.
 
 ## Pièges connus
 
 - `sshd` se relance depuis `/` : dans `Tools/test-servers.sh`, tous ses chemins doivent être absolus.
 - `swift package clean` efface tout `.build/` : l'état des serveurs de test vit donc dans `$TMPDIR`, et `stop` reconnaît aussi les serveurs à leur ligne de commande. Il efface aussi `.build/Fil.app` : relancer `Tools/bundle.sh`.
 - Les trois serveurs pyftpdlib partagent une boucle d'événements : un seul `serve_forever`.
+- libcurl, en reprise d'envoi, ne saute pas le début de la source : il faut positionner la lecture soi-même, sinon la taille est juste et le contenu faux (`FTPProvider.upload`).
+- L'adresse d'un fichier WebDAV n'a pas de `/` final (Apache répond 400) ; celle d'un dossier en a un.
+- `expectedContentLength` d'URLSession vaut -1 pour un `HEAD` sur un fichier vide : lire l'en-tête `Content-Length`.
+- Dans le journal du serveur simulé, un fichier envoyé laisse deux traces (envoi, renommage).
 - Swift compare les chaînes à équivalence canonique près : pour vérifier une normalisation Unicode, comparer les octets UTF-8.
 - Le délégué par tâche d'URLSession ne reçoit pas la progression des téléchargements : elle passe par le délégué de session (`WebDAVSessionRelay`).
 - Chaque recompilation change la signature ad hoc : macOS redemande l'accès aux mots de passe enregistrés par une version précédente.

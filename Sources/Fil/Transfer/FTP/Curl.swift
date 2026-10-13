@@ -101,6 +101,12 @@ final class CurlHandle {
         return value
     }
 
+    func offset(_ info: CURLINFO) -> Int64 {
+        var value: curl_off_t = 0
+        _ = fil_curl_get_offset(raw, info, &value)
+        return Int64(value)
+    }
+
     /// Exécute la requête configurée, en reliant les rappels à `transfer` le temps de l'appel.
     func perform(_ transfer: CurlTransfer) -> Result<Void, CurlFailure> {
         let context = Unmanaged.passUnretained(transfer).toOpaque()

@@ -1,9 +1,19 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Une proposition de l'application sur la connexion ouverte (passer en FTPS).
+struct SecurityOffer {
+    let text: String
+    let acceptLabel: String
+    let accept: () -> Void
+    let dismissLabel: String
+    let dismiss: () -> Void
+}
+
 /// Phase « fichiers » : naviguer, télécharger, envoyer par glisser-déposer.
 struct BrowserView: View {
     @Bindable var browser: BrowserModel
+    var offer: SecurityOffer?
     let close: () -> Void
 
     @State private var sortOrder = [KeyPathComparator(\RemoteFile.name)]
@@ -18,6 +28,10 @@ struct BrowserView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             toolbar.padding(.top, Spacing.regular)
+            if let offer {
+                OfferBanner(text: offer.text, accept: (offer.acceptLabel, offer.accept), dismiss: (offer.dismissLabel, offer.dismiss))
+                    .padding(.top, Spacing.tight)
+            }
             if let notice = browser.notice {
                 AlertBanner(text: notice, action: ("Fermer", { browser.notice = nil }))
                     .padding(.top, Spacing.tight)

@@ -119,6 +119,29 @@ struct AlertBanner: View {
     }
 }
 
+/// Une proposition, pas une erreur : fond d'accent doux, deux liens, aucun bouton plein.
+struct OfferBanner: View {
+    let text: String
+    let accept: (label: String, perform: () -> Void)
+    let dismiss: (label: String, perform: () -> Void)
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.regular) {
+            Image(systemName: "lock")
+            Text(text).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: Spacing.tight)
+            Button(accept.label, action: accept.perform)
+                .buttonStyle(QuietButtonStyle()).underline()
+            Button(dismiss.label, action: dismiss.perform)
+                .buttonStyle(QuietButtonStyle(tint: Palette.inkSoft))
+        }
+        .font(TypeScale.label)
+        .foregroundStyle(Palette.accentInk)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Palette.accentWash, in: RoundedRectangle(cornerRadius: Radius.medium))
+    }
+}
+
 struct ThinProgress: View {
     /// `nil` : durée inconnue, la barre respire au lieu d'avancer.
     let fraction: Double?

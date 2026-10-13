@@ -49,16 +49,71 @@ final class WebDAVProvider: RemoteFileProvider {
         return try WebDAVListing.parse(data, rootPath: rootPath, directory: directory)
     }
 
-    func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
-        let request = makeRequest(url(for: file.path, directory: false), method: "GET")
-        let response = try await relay.run(session.downloadTask(with: request), destination: destination, progress: progress)
-        try check(response, subject: file.name)
+    /// Un PUT repart toujours du début : le protocole n'a pas d'envoi reprenable.
+    var canResumeUploads: Bool { false }
+
+    func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
+        var start = offset
+        while true {
+            var request = makeRequest(url(for: file.path, directory: false), method: "GET")
+            if start > 0 { request.setValue("bytes=\(start)-", forHTTPHeaderField: "Range") }
+            do {
+                let response = try await relay.run(session.downloadTask(with: request), destination: destination, offset: start, progress: progress)
+                // 416 : le fichier a changé de taille depuis le début du téléchargement. On recommence.
+                if start > 0, (response as? HTTPURLResponse)?.statusCode == 416 {
+                    start = 0
+                    continue
+                }
+                try check(response, subject: file.name)
+                return
+            } catch is WebDAVResumeMismatch {
+                start = 0
+            }
+        }
     }
 
-    func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws {
+    func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         var request = makeRequest(url(for: destination, directory: false), method: "PUT")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         let response = try await relay.run(session.uploadTask(with: request, fromFile: source), destination: nil, progress: progress)
+        try check(response, subject: destination.name)
+    }
+
+    func size(of path: RemotePath) async throws -> Int64? {
+        var head = makeRequest(url(for: path, directory: false), method: "HEAD")
+        head.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let (_, response) = try await session.data(for: head)
+        guard let http = response as? HTTPURLResponse else { throw ProviderError.server("Le serveur a répondu de façon inattendue.") }
+        switch http.statusCode {
+        case 200..<300:
+            // L'en-tête est la seule source fiable : pour un fichier vide, `expectedContentLength` vaut -1.
+            if let header = http.value(forHTTPHeaderField: "Content-Length"), let length = Int64(header) { return length }
+            return try await sizeByPropfind(path)
+        case 404, 410:
+            return nil
+        case 405, 501:
+            return try await sizeByPropfind(path)
+        default:
+            try check(response, subject: path.name)
+            return nil
+        }
+    }
+
+    /// Serveur sans `HEAD`, ou muet sur la taille : `PROPFIND` la donne. L'adresse d'un fichier n'a pas de `/` final.
+    private func sizeByPropfind(_ path: RemotePath) async throws -> Int64? {
+        let data = try await propfind(path, depth: "0", directory: false)
+        guard let entry = WebDAVListing.parseEntry(data), let length = entry.length else {
+            throw ProviderError.server("Le serveur n'indique pas la taille de « \(path.name) ».")
+        }
+        return length
+    }
+
+    func move(_ source: RemotePath, to destination: RemotePath) async throws {
+        var request = makeRequest(url(for: source, directory: false), method: "MOVE")
+        request.setValue(url(for: destination, directory: false).absoluteString, forHTTPHeaderField: "Destination")
+        // MOVE remplace atomiquement côté serveur : pas de mise de côté à faire ici.
+        request.setValue("T", forHTTPHeaderField: "Overwrite")
+        let (_, response) = try await session.data(for: request)
         try check(response, subject: destination.name)
     }
 
@@ -76,8 +131,8 @@ final class WebDAVProvider: RemoteFileProvider {
 
     // MARK: Mécanique
 
-    private func propfind(_ path: RemotePath, depth: String) async throws -> Data {
-        var request = makeRequest(url(for: path, directory: true), method: "PROPFIND")
+    private func propfind(_ path: RemotePath, depth: String, directory: Bool = true) async throws -> Data {
+        var request = makeRequest(url(for: path, directory: directory), method: "PROPFIND")
         request.setValue(depth, forHTTPHeaderField: "Depth")
         request.setValue("application/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("""
@@ -136,6 +191,7 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
     private struct Pending {
         let continuation: CheckedContinuation<URLResponse, Error>
         let destination: URL?
+        let offset: Int64
         let progress: ProgressHandler
         var moveError: Error?
     }
@@ -148,11 +204,11 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
         self.credential = credential
     }
 
-    func run(_ task: URLSessionTask, destination: URL?, progress: @escaping ProgressHandler) async throws -> URLResponse {
+    func run(_ task: URLSessionTask, destination: URL?, offset: Int64 = 0, progress: @escaping ProgressHandler) async throws -> URLResponse {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.withLock {
-                    pending[task.taskIdentifier] = Pending(continuation: continuation, destination: destination, progress: progress)
+                    pending[task.taskIdentifier] = Pending(continuation: continuation, destination: destination, offset: offset, progress: progress)
                 }
                 task.resume()
             }
@@ -166,7 +222,10 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        progressHandler(for: downloadTask)?(totalBytesWritten)
+        // Une réponse 206 ne contient que la suite : la progression compte depuis le début du fichier.
+        let resumed = (downloadTask.response as? HTTPURLResponse)?.statusCode == 206
+        let offset = resumed ? (lock.withLock { pending[downloadTask.taskIdentifier]?.offset } ?? 0) : 0
+        progressHandler(for: downloadTask)?(offset + totalBytesWritten)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
@@ -174,16 +233,42 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Le fichier temporaire disparaît au retour de cette méthode : on le déplace tout de suite.
+        // Le fichier temporaire disparaît au retour de cette méthode : on le range tout de suite.
         guard let http = downloadTask.response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              let destination = lock.withLock({ pending[downloadTask.taskIdentifier]?.destination }) else { return }
+              let entry = lock.withLock({ pending[downloadTask.taskIdentifier] }),
+              let destination = entry.destination else { return }
         do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
+            if http.statusCode == 206, entry.offset > 0 {
+                // La suite arrive : elle n'est valable que si elle commence exactement là où on s'est arrêté.
+                guard Self.contentRangeStart(http) == entry.offset else { throw WebDAVResumeMismatch() }
+                try Self.append(location, to: destination, after: entry.offset)
+            } else {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: location, to: destination)
             }
-            try FileManager.default.moveItem(at: location, to: destination)
         } catch {
             lock.withLock { pending[downloadTask.taskIdentifier]?.moveError = error }
+        }
+    }
+
+    /// Début de la plage renvoyée : `Content-Range: bytes 1000-1999/2000`.
+    static func contentRangeStart(_ response: HTTPURLResponse) -> Int64? {
+        guard let value = response.value(forHTTPHeaderField: "Content-Range") else { return nil }
+        let digits = value.drop { !$0.isNumber }.prefix { $0.isNumber }
+        return Int64(digits)
+    }
+
+    private static func append(_ source: URL, to destination: URL, after offset: Int64) throws {
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        let output = try FileHandle(forWritingTo: destination)
+        defer { try? output.close() }
+        try output.truncate(atOffset: UInt64(offset))
+        try output.seek(toOffset: UInt64(offset))
+        while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+            try output.write(contentsOf: chunk)
         }
     }
 
@@ -218,3 +303,6 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
         }
     }
 }
+
+/// Le serveur a répondu 206 pour une autre plage que celle demandée : on repart de zéro.
+struct WebDAVResumeMismatch: Error {}

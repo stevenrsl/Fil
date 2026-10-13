@@ -17,3 +17,13 @@ Tous les fournisseurs respectent `RemoteFileProvider`. Ils n'exposent aucun type
 **SFTP** (`Transfer/SFTP/`). Les options en ligne de commande priment sur `~/.ssh/config` ; le port 22 et l'utilisateur vide ne sont pas imposés, pour qu'un alias garde les siens. 64 requêtes de 32 Kio en vol. Les liens sont résolus par `STAT` pour savoir s'ils mènent à un dossier.
 
 **WebDAV** (`Transfer/WebDAV/`). `PROPFIND` profondeur 1, espaces de noms traités, seules les propriétés en 2xx retenues. La racine WebDAV de la connexion est la limite de navigation. `DELETE` récursif natif, `MKCOL` pour les dossiers.
+
+## Envoi atomique et reprise, par protocole
+
+| | Taille | Renommage (remplace) | Reprise de téléchargement | Reprise d'envoi |
+| --- | --- | --- | --- | --- |
+| FTP / FTPS | `SIZE`, repli sur le listing | `RNFR`/`RNTO`, repli par mise de côté | `REST` | `APPE`, lecture positionnée à la main |
+| SFTP | `STAT` | `posix-rename@openssh.com`, repli `RENAME` puis mise de côté | lectures à décalage explicite | écritures à décalage explicite, sans troncature |
+| WebDAV | `HEAD`, repli `PROPFIND` | `MOVE` + `Overwrite: T` | `Range`, repli à zéro si 200 ou 416 | non : un `PUT` repart du début |
+
+Dans tous les cas, l'envoi se fait vers `nom.filpart`, la taille est vérifiée avant le renommage au-delà de 4 Mio ou après une reprise, et un serveur qui refuse le renommage reçoit un envoi direct, signalé dans le plateau.

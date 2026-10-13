@@ -22,23 +22,34 @@ final class MemorySecretStore: SecretStore, @unchecked Sendable {
 }
 
 /// Serveur simulé : une arborescence en mémoire, des pannes à la demande.
+/// Il impose les préconditions d'un vrai serveur (décalage de reprise exact) : un bug de reprise échoue ici.
 actor MockProvider: RemoteFileProvider {
     nonisolated let connection: RemoteConnection
+    nonisolated let canResumeUploads: Bool
     private(set) var tree: [RemotePath: [RemoteFile]]
     private(set) var contents: [RemotePath: Data]
     private(set) var listCalls: [RemotePath] = []
+    /// Appels de transfert dans l'ordre : « upload /a.filpart from 40 », « move /a.filpart -> /a »…
+    private(set) var journal: [String] = []
     var home: RemotePath
     var connectError: Error?
     var listError: Error?
     var transferError: Error?
     /// Pause avant chaque bloc transféré, pour observer une file en mouvement.
     var chunkDelay: Duration = .zero
+    var chunkSize = 1
+    /// Coupe la connexion une fois ce nombre d'octets atteint (une seule fois, puis le serveur « revient »).
+    var interruptAfter: Int?
+    var refuseMove = false
+    /// Le serveur annonce un envoi réussi mais garde un octet de moins.
+    var dropLastUploadedByte = false
     private(set) var running = 0
     private(set) var maxRunning = 0
 
-    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:]) {
+    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:], canResumeUploads: Bool = true) {
         self.connection = connection
         self.home = home
+        self.canResumeUploads = canResumeUploads
         var tree: [RemotePath: [RemoteFile]] = [.root: []]
         var contents: [RemotePath: Data] = [:]
         for (rawPath, text) in files {
@@ -69,6 +80,22 @@ actor MockProvider: RemoteFileProvider {
     func set(listError: Error?) { self.listError = listError }
     func set(transferError: Error?) { self.transferError = transferError }
     func set(chunkDelay: Duration) { self.chunkDelay = chunkDelay }
+    func set(chunkSize: Int) { self.chunkSize = chunkSize }
+    func set(interruptAfter: Int?) { self.interruptAfter = interruptAfter }
+    func set(refuseMove: Bool) { self.refuseMove = refuseMove }
+    func set(dropLastUploadedByte: Bool) { self.dropLastUploadedByte = dropLastUploadedByte }
+
+    /// Remplace (ou crée) un fichier du serveur, comme si quelqu'un d'autre l'avait modifié.
+    func put(_ rawPath: String, _ text: String) {
+        let path = RemotePath(rawPath)
+        contents[path] = Data(text.utf8)
+        register(path)
+    }
+
+    private func register(_ path: RemotePath) {
+        let size = Int64(contents[path]?.count ?? 0)
+        Self.insert(RemoteFile(name: path.name, path: path, kind: .file, byteCount: size), into: &tree)
+    }
 
     func connect() async throws -> RemotePath {
         if let connectError { throw connectError }
@@ -82,32 +109,80 @@ actor MockProvider: RemoteFileProvider {
         return children
     }
 
-    func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
+    func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         begin()
         defer { end() }
+        journal.append("download \(file.path) from \(offset)")
         guard let data = contents[file.path] else { throw ProviderError.notFound(file.name) }
-        var written = Data()
-        for byte in data {
+        if offset > 0, LocalFile.size(of: destination) != offset {
+            throw ProviderError.server("Décalage local incohérent : \(LocalFile.size(of: destination) ?? -1) au lieu de \(offset).")
+        }
+        let output = try LocalFile.openForWriting(destination, resumingAt: offset)
+        defer { try? output.close() }
+        var position = Int(offset)
+        while position < data.count {
             try Task.checkCancellation()
             if chunkDelay > .zero { try await Task.sleep(for: chunkDelay) }
             if let transferError { throw transferError }
-            written.append(byte)
-            progress(Int64(written.count))
+            let end = min(position + chunkSize, data.count)
+            try output.write(contentsOf: data.subdata(in: position..<end))
+            position = end
+            progress(Int64(position))
+            if let limit = interruptAfter, position >= limit {
+                interruptAfter = nil
+                throw ProviderError.connectionLost
+            }
         }
-        try written.write(to: destination)
     }
 
-    func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws {
+    func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         begin()
         defer { end() }
+        journal.append("upload \(destination) from \(offset)")
         let data = try Data(contentsOf: source)
-        if chunkDelay > .zero { try await Task.sleep(for: chunkDelay) }
-        try Task.checkCancellation()
-        if let transferError { throw transferError }
         guard tree[destination.parent ?? .root] != nil else { throw ProviderError.notFound(destination.parent?.name ?? "/") }
+        if offset > 0 {
+            guard canResumeUploads, contents[destination]?.count == Int(offset) else {
+                throw ProviderError.server("Décalage distant incohérent : \(contents[destination]?.count ?? -1) au lieu de \(offset).")
+            }
+        } else {
+            contents[destination] = Data()
+        }
+        register(destination)
+        var position = Int(offset)
+        while position < data.count {
+            try Task.checkCancellation()
+            if chunkDelay > .zero { try await Task.sleep(for: chunkDelay) }
+            if let transferError { throw transferError }
+            let end = min(position + chunkSize, data.count)
+            contents[destination, default: Data()].append(data.subdata(in: position..<end))
+            position = end
+            register(destination)
+            progress(Int64(position))
+            if let limit = interruptAfter, position >= limit {
+                interruptAfter = nil
+                throw ProviderError.connectionLost
+            }
+        }
+        if dropLastUploadedByte, var stored = contents[destination], !stored.isEmpty {
+            stored.removeLast()
+            contents[destination] = stored
+            register(destination)
+        }
+    }
+
+    func size(of path: RemotePath) async throws -> Int64? {
+        contents[path].map { Int64($0.count) }
+    }
+
+    func move(_ source: RemotePath, to destination: RemotePath) async throws {
+        journal.append("move \(source) -> \(destination)")
+        if refuseMove { throw ProviderError.accessDenied(destination.name) }
+        guard let data = contents[source] else { throw ProviderError.notFound(source.name) }
         contents[destination] = data
-        Self.insert(RemoteFile(name: destination.name, path: destination, kind: .file, byteCount: Int64(data.count)), into: &tree)
-        progress(Int64(data.count))
+        contents[source] = nil
+        tree[source.parent ?? .root]?.removeAll { $0.path == source }
+        register(destination)
     }
 
     func makeDirectory(_ path: RemotePath) async throws {

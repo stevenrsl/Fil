@@ -39,3 +39,7 @@ CURLcode fil_curl_get_string(CURL *handle, CURLINFO info, const char **value) {
 CURLcode fil_curl_get_long(CURL *handle, CURLINFO info, long *value) {
     return curl_easy_getinfo(handle, info, value);
 }
+
+CURLcode fil_curl_get_offset(CURL *handle, CURLINFO info, curl_off_t *value) {
+    return curl_easy_getinfo(handle, info, value);
+}

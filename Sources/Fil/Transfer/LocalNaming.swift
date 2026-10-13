@@ -67,3 +67,24 @@ enum LocalNaming {
         }
     }
 }
+
+/// Fichiers locaux partiels : création, ou reprise à la suite de ce qui est déjà écrit.
+enum LocalFile {
+    /// Avec `offset` > 0, le fichier garde ses `offset` premiers octets et l'écriture continue derrière.
+    static func openForWriting(_ url: URL, resumingAt offset: Int64) throws -> FileHandle {
+        if offset <= 0 {
+            guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+                throw ProviderError.server("Impossible de créer « \(url.lastPathComponent) » sur ce Mac.")
+            }
+            return try FileHandle(forWritingTo: url)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(offset))
+        try handle.seek(toOffset: UInt64(offset))
+        return handle
+    }
+
+    static func size(of url: URL) -> Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? nil
+    }
+}

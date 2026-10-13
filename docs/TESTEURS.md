@@ -23,11 +23,14 @@ open .build/Fil.app
 4. **Télécharger** : sélectionne puis bouton « Télécharger » ou ⌘D, ou double-clic sur un fichier. Un dossier se télécharge en entier. Rien n'est jamais écrasé : un nom pris reçoit « (2) ».
 5. **Envoyer** : glisse des fichiers ou des dossiers depuis le Finder sur la liste, ou « Envoyer… » (⌘U). Fil demande avant de remplacer un fichier existant.
 6. **Fermer la fenêtre pendant un transfert** : il continue. Rouvre Fil depuis le Dock pour voir le plateau.
-7. **Provoquer des erreurs** : mauvais mot de passe, mauvais port, serveur éteint, câble débranché pendant un envoi. Chaque échec doit dire pourquoi en une phrase.
+7. **Couper le réseau pendant un envoi ou un téléchargement** (Wi-Fi coupé, câble débranché), puis le rétablir et cliquer sur « Réessayer » dans le plateau. Le transfert doit reprendre là où il s'était arrêté (la phrase dit « Reprise à… »), pas repartir de zéro. Pendant la coupure, la version en ligne du fichier ne doit pas avoir changé : l'envoi se fait sous `nom.filpart` et n'est renommé qu'à la fin.
+8. **Connexion FTP** : si le serveur accepte aussi FTPS, une bannière propose d'y passer. Essaie « Passer en FTPS » : la connexion se rouvre chiffrée. « Ne plus proposer » est mémorisé pour ce serveur.
+9. **Provoquer des erreurs** : mauvais mot de passe, mauvais port, serveur éteint, câble débranché pendant un envoi. Chaque échec doit dire pourquoi en une phrase.
 
 ## Particularités par protocole
 
-- **FTP** n'est pas chiffré : préfère FTPS ou SFTP quand le serveur le permet.
+- **FTP** n'est pas chiffré : Fil propose FTPS quand le serveur l'accepte ; sinon préfère SFTP.
+- **Fichiers `.filpart`** : un envoi interrompu laisse `nom.filpart` sur le serveur jusqu'à ce que tu réessaies ou que tu effaces le transfert du plateau. Ne les supprime pas à la main pendant une reprise.
 - **FTPS** : port 21 pour l'explicite, 990 pour l'implicite. Un certificat auto-signé est refusé (épinglage prévu).
 - **SFTP** : tes clés, ton agent et `~/.ssh/config` sont utilisés ; un alias de ta configuration peut servir d'adresse. Avec un mot de passe, macOS peut demander à Fil l'accès au trousseau : autorise-le. Une empreinte de serveur changée bloque la connexion, volontairement.
 - **WebDAV** : HTTPS seulement. Pour Nextcloud, la racine est `/remote.php/dav/files/ton-identifiant`.

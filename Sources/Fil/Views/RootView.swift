@@ -29,9 +29,23 @@ struct RootView: View {
             ConnectingView(connection: connection) { model.cancelConnecting() }
         case .browsing:
             if let browser = model.browser {
-                BrowserView(browser: browser) { model.closeConnection() }
+                BrowserView(browser: browser, offer: ftpsOffer) { model.closeConnection() }
             }
         }
+    }
+}
+
+extension RootView {
+    /// FTP en clair alors que le serveur sait faire FTPS : une phrase, deux liens.
+    fileprivate var ftpsOffer: SecurityOffer? {
+        guard model.hasFTPSOffer else { return nil }
+        return SecurityOffer(
+            text: "Ce serveur accepte FTPS. En FTP, ton mot de passe et tes fichiers circulent en clair.",
+            acceptLabel: "Passer en FTPS",
+            accept: { model.acceptFTPSOffer() },
+            dismissLabel: "Ne plus proposer",
+            dismiss: { model.dismissFTPSOffer() }
+        )
     }
 }
 

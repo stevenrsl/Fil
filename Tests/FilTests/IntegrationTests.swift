@@ -65,6 +65,25 @@ final class IntegrationTests: XCTestCase {
         await assertThrows(ProviderError.connectionRefused(host: "127.0.0.1", port: 1)) { _ = try await provider.connect() }
     }
 
+    // MARK: Sonde FTPS
+
+    func testFTPSProbeRecognisesAnFTPSServer() async throws {
+        let result = await FTPSProbe.check(try ftpConnection(port: "FIL_IT_FTPS_PORT"), password: try value("FIL_IT_PASSWORD"), certificateAuthorities: try value("FIL_IT_FTPS_CA"))
+        XCTAssertEqual(result, .available)
+    }
+
+    func testFTPSProbeDoesNotOfferWhenTheCertificateIsNotTrusted() async throws {
+        let result = await FTPSProbe.check(try ftpConnection(port: "FIL_IT_FTPS_PORT"), password: try value("FIL_IT_PASSWORD"))
+        XCTAssertEqual(result, .untrustedCertificate)
+    }
+
+    func testFTPSProbeOnAPlainServerAndAClosedPort() async throws {
+        let plain = await FTPSProbe.check(try ftpConnection(port: "FIL_IT_FTP_PORT"), password: try value("FIL_IT_PASSWORD"))
+        XCTAssertEqual(plain, .unavailable)
+        let closed = await FTPSProbe.check(RemoteConnection(host: "127.0.0.1", port: 1, protocol: .ftp), password: "")
+        XCTAssertEqual(closed, .unavailable)
+    }
+
     // MARK: SFTP
 
     private func sftpProvider(knownHosts: String? = nil) throws -> SFTPProvider {
@@ -158,11 +177,13 @@ final class IntegrationTests: XCTestCase {
         try "feuille".write(to: tree.appendingPathComponent("a/b/feuille.txt"), atomically: true, encoding: .utf8)
         try "racine".write(to: tree.appendingPathComponent("racine.txt"), atomically: true, encoding: .utf8)
         let report = TransferReport { _ in }
-        try await TransferRunner.upload(tree, into: base, via: provider, report: report)
+        try await TransferRunner.upload(tree, into: base, via: provider, ledger: TransferLedger(), report: report)
         let returned = local.appendingPathComponent("Retour", isDirectory: true)
         try FileManager.default.createDirectory(at: returned, withIntermediateDirectories: true)
-        try await TransferRunner.download(RemoteFile(name: "Arbre", path: base.appending("Arbre"), kind: .directory), into: returned, via: provider, report: report)
+        try await TransferRunner.download(RemoteFile(name: "Arbre", path: base.appending("Arbre"), kind: .directory), into: returned, via: provider, ledger: TransferLedger(), report: report)
         XCTAssertEqual(try String(contentsOf: returned.appendingPathComponent("Arbre/a/b/feuille.txt"), encoding: .utf8), "feuille", file: file, line: line)
+
+        try await exercisePartialsAndMoves(provider, in: base, local: local, bytes: bytes, remoteBig: remoteBig, file: file, line: line)
 
         // Annulation en plein transfert : erreur d'annulation, pas d'échec réseau.
         let cancelled = local.appendingPathComponent("annule.bin")
@@ -190,6 +211,76 @@ final class IntegrationTests: XCTestCase {
         try await provider.delete(RemoteFile(name: base.name, path: base, kind: .directory))
         let after = try await provider.list(home)
         XCTAssertFalse(after.contains { $0.path == base }, "suppression récursive", file: file, line: line)
+    }
+
+    /// Taille, fichier vide, renommage qui remplace, reprise d'envoi et de téléchargement : octet pour octet.
+    private func exercisePartialsAndMoves(_ provider: any RemoteFileProvider, in base: RemotePath, local: URL, bytes: [UInt8], remoteBig: RemoteFile, file: StaticString, line: UInt) async throws {
+        let size = try await provider.size(of: base.appending("gros.bin"))
+        XCTAssertEqual(size, 3_000_123, "taille d'un fichier présent", file: file, line: line)
+        let absent = try await provider.size(of: base.appending("nexistepas.bin"))
+        XCTAssertNil(absent, "taille d'un fichier absent", file: file, line: line)
+
+        // Fichier vide, dans les deux sens.
+        let empty = local.appendingPathComponent("vide.txt")
+        try Data().write(to: empty)
+        try await provider.upload(empty, to: base.appending("vide.txt")) { _ in }
+        let emptySize = try await provider.size(of: base.appending("vide.txt"))
+        XCTAssertEqual(emptySize, 0, "fichier vide envoyé", file: file, line: line)
+        let emptyBack = local.appendingPathComponent("vide-retour.txt")
+        try await provider.download(RemoteFile(name: "vide.txt", path: base.appending("vide.txt"), kind: .file, byteCount: 0), to: emptyBack) { _ in }
+        XCTAssertEqual(try Data(contentsOf: emptyBack), Data(), file: file, line: line)
+
+        // Renommage : vers un nom libre, puis par-dessus un fichier existant.
+        for (name, text) in [("ancien.txt", "ancien"), ("nouveau.txt", "le nouveau contenu")] {
+            let url = local.appendingPathComponent(name)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try await provider.upload(url, to: base.appending(name)) { _ in }
+        }
+        try await provider.move(base.appending("nouveau.txt"), to: base.appending("ancien.txt"))
+        let replaced = local.appendingPathComponent("remplace.txt")
+        let remoteReplaced = try await provider.list(base).first { $0.name == "ancien.txt" }
+        try await provider.download(try XCTUnwrap(remoteReplaced), to: replaced) { _ in }
+        XCTAssertEqual(try String(contentsOf: replaced, encoding: .utf8), "le nouveau contenu", "renommage par-dessus l'existant", file: file, line: line)
+        let gone = try await provider.size(of: base.appending("nouveau.txt"))
+        XCTAssertNil(gone, "la source du renommage a disparu", file: file, line: line)
+
+        // Reprise d'un envoi : un partiel de 1 000 003 octets, complété jusqu'au bout.
+        let cut = 1_000_003
+        let prefix = local.appendingPathComponent("moitie.bin")
+        try Data(bytes.prefix(cut)).write(to: prefix)
+        let partial = base.appending("repris.bin.filpart")
+        try await provider.upload(prefix, to: partial) { _ in }
+        let partialSize = try await provider.size(of: partial)
+        XCTAssertEqual(partialSize, Int64(cut), "le partiel est là, à la taille attendue", file: file, line: line)
+        let big = local.appendingPathComponent("gros.bin")
+        let progress = ProgressBox()
+        if provider.canResumeUploads {
+            try await provider.upload(big, to: partial, resumingAt: Int64(cut)) { progress.record($0) }
+            XCTAssertEqual(progress.last, 3_000_123, "la progression compte depuis le début du fichier", file: file, line: line)
+        } else {
+            try await provider.upload(big, to: partial) { _ in }
+        }
+        try await provider.move(partial, to: base.appending("repris.bin"))
+        let resumed = try await provider.list(base).first { $0.name == "repris.bin" }
+        let resumedBack = local.appendingPathComponent("repris-retour.bin")
+        try await provider.download(try XCTUnwrap(resumed), to: resumedBack) { _ in }
+        XCTAssertEqual(try Data(contentsOf: resumedBack), Data(bytes), "envoi repris : contenu identique", file: file, line: line)
+
+        // Reprise d'un téléchargement.
+        let half = local.appendingPathComponent("telechargement.bin")
+        try Data(bytes.prefix(cut)).write(to: half)
+        let downloadProgress = ProgressBox()
+        try await provider.download(remoteBig, to: half, resumingAt: Int64(cut)) { downloadProgress.record($0) }
+        XCTAssertEqual(try Data(contentsOf: half), Data(bytes), "téléchargement repris : contenu identique", file: file, line: line)
+        XCTAssertEqual(downloadProgress.last, 3_000_123, file: file, line: line)
+
+        // Le chemin complet, comme l'interface : aucun .filpart ne reste après un envoi.
+        let atomic = local.appendingPathComponent("atomique.txt")
+        try "contenu".write(to: atomic, atomically: true, encoding: .utf8)
+        try await TransferRunner.upload(atomic, into: base, via: provider, ledger: TransferLedger(), report: TransferReport { _ in })
+        let names = try await provider.list(base).map(\.name)
+        XCTAssertTrue(names.contains("atomique.txt"), file: file, line: line)
+        XCTAssertFalse(names.contains { $0.hasSuffix(".filpart") }, "aucun partiel après un envoi réussi : \(names)", file: file, line: line)
     }
 
     private func assertThrows(_ expected: ProviderError, file: StaticString = #filePath, line: UInt = #line, _ work: () async throws -> Void) async {

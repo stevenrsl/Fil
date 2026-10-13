@@ -70,34 +70,102 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
         }
     }
 
-    func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
+    var canResumeUploads: Bool { true }
+
+    func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let url = address.fileURL(file.path)
         try await run(on: Self.transfers) { flag in
-            guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-                throw ProviderError.server("Impossible de créer « \(destination.lastPathComponent) » sur ce Mac.")
+            var start = offset
+            while true {
+                let base = start
+                let output = try LocalFile.openForWriting(destination, resumingAt: base)
+                defer { try? output.close() }
+                let handle = try CurlHandle()
+                let transfer = CurlTransfer(output: output, progress: { progress(base + $0) }, cancellation: flag)
+                self.prepare(handle, url: url)
+                if base > 0 { handle.set(CURLOPT_RESUME_FROM_LARGE, offset: base) }
+                switch handle.perform(transfer) {
+                case .success:
+                    return
+                case .failure(let failure) where base > 0 && Self.isResumeRefused(failure):
+                    // Le serveur ne sait pas reprendre (REST refusé) : on recommence proprement à zéro.
+                    start = 0
+                case .failure(let failure):
+                    throw self.readable(failure, transfer: transfer, subject: file.name)
+                }
             }
-            let output = try FileHandle(forWritingTo: destination)
-            defer { try? output.close() }
-            let handle = try CurlHandle()
-            let transfer = CurlTransfer(output: output, progress: progress, cancellation: flag)
-            self.prepare(handle, url: url)
-            try self.check(handle.perform(transfer), transfer, subject: file.name)
         }
     }
 
-    func upload(_ source: URL, to destination: RemotePath, progress: @escaping ProgressHandler) async throws {
+    func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let url = address.fileURL(destination)
         try await run(on: Self.transfers) { flag in
             let size = try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int64 ?? -1
-            let input = try FileHandle(forReadingFrom: source)
-            defer { try? input.close() }
-            let handle = try CurlHandle()
-            let transfer = CurlTransfer(input: input, progress: progress, cancellation: flag)
-            self.prepare(handle, url: url)
-            handle.set(CURLOPT_UPLOAD, 1)
-            handle.set(CURLOPT_INFILESIZE_LARGE, offset: size)
-            try self.check(handle.perform(transfer), transfer, subject: destination.name)
+            var start = offset
+            while true {
+                let base = start
+                let input = try FileHandle(forReadingFrom: source)
+                defer { try? input.close() }
+                // Piège vérifié sur libcurl 8.7 : en reprise, libcurl complète avec APPE et retranche `base`
+                // de la taille annoncée, mais ne saute pas le début de la source. Sans ce positionnement,
+                // il enverrait les premiers octets du fichier derrière le partiel : taille juste, contenu faux.
+                try input.seek(toOffset: UInt64(max(0, base)))
+                let handle = try CurlHandle()
+                let transfer = CurlTransfer(input: input, progress: { progress(base + $0) }, cancellation: flag)
+                self.prepare(handle, url: url)
+                handle.set(CURLOPT_UPLOAD, 1)
+                handle.set(CURLOPT_INFILESIZE_LARGE, offset: size)
+                if base > 0 { handle.set(CURLOPT_RESUME_FROM_LARGE, offset: base) }
+                switch handle.perform(transfer) {
+                case .success:
+                    return
+                case .failure(let failure) where base > 0 && (Self.isResumeRefused(failure) || Self.isRejectedCommand(failure)):
+                    start = 0
+                case .failure(let failure):
+                    throw self.readable(failure, transfer: transfer, subject: destination.name)
+                }
+            }
         }
+    }
+
+    func size(of path: RemotePath) async throws -> Int64? {
+        enum Outcome: Sendable { case size(Int64), absent, unknown }
+        let url = address.fileURL(path)
+        let outcome: Outcome = try await run(on: browsing) { flag in
+            let handle = try self.sharedHandle()
+            let transfer = CurlTransfer(cancellation: flag)
+            self.prepare(handle, url: url)
+            handle.set(CURLOPT_NOBODY, 1)
+            switch handle.perform(transfer) {
+            case .success:
+                let size = handle.offset(CURLINFO_CONTENT_LENGTH_DOWNLOAD_T)
+                return size >= 0 ? .size(size) : .unknown
+            case .failure(let failure) where failure.code == CURLE_REMOTE_FILE_NOT_FOUND || failure.response == 550:
+                return .absent
+            case .failure(let failure) where Self.isRejectedCommand(failure):
+                return .unknown
+            case .failure(let failure):
+                throw self.readable(failure, transfer: transfer, subject: path.name)
+            }
+        }
+        switch outcome {
+        case .size(let size): return size
+        case .absent: return nil
+        case .unknown:
+            // Serveur sans SIZE : le listing du dossier parent répond à la place.
+            let siblings = try await list(path.parent ?? .root)
+            return siblings.first { $0.path == path }?.byteCount
+        }
+    }
+
+    func move(_ source: RemotePath, to destination: RemotePath) async throws {
+        try await moveReplacing(
+            source,
+            to: destination,
+            rename: { try await self.quote(["RNFR \($0.value)", "RNTO \($1.value)"], paths: [$0, $1], subject: $1.name) },
+            exists: { try await self.size(of: $0) != nil },
+            remove: { try await self.command("DELE", $0) }
+        )
     }
 
     func makeDirectory(_ path: RemotePath) async throws {
@@ -117,7 +185,11 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
 
     /// Commande brute envoyée après connexion. Les chemins sont absolus : l'état `CWD` ne compte pas.
     private func command(_ verb: String, _ path: RemotePath) async throws {
-        guard !path.value.contains(where: { $0 == "\r" || $0 == "\n" }) else {
+        try await quote(["\(verb) \(path.value)"], paths: [path], subject: path.name)
+    }
+
+    private func quote(_ lines: [String], paths: [RemotePath], subject: String) async throws {
+        guard !paths.contains(where: { $0.value.contains(where: { $0 == "\r" || $0 == "\n" }) }) else {
             throw ProviderError.server("Ce nom contient un retour à la ligne : le serveur FTP ne peut pas le traiter.")
         }
         try await run(on: browsing) { flag in
@@ -125,8 +197,8 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
             let transfer = CurlTransfer(cancellation: flag)
             self.prepare(handle, url: self.address.rootURL)
             handle.set(CURLOPT_NOBODY, 1)
-            handle.set(CURLOPT_QUOTE, lines: ["\(verb) \(path.value)"])
-            try self.check(handle.perform(transfer), transfer, subject: path.name)
+            handle.set(CURLOPT_QUOTE, lines: lines)
+            try self.check(handle.perform(transfer), transfer, subject: subject)
         }
     }
 
@@ -184,6 +256,11 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
         if failure.code == CURLE_ABORTED_BY_CALLBACK, transfer.cancellation.isCancelled { return CancellationError() }
         if let local = transfer.localError { return local }
         return Self.describe(failure, host: connection.resolvedHost, port: connection.port, subject: subject)
+    }
+
+    /// `REST` refusé, ou décalage incohérent : la reprise est impossible, pas le transfert.
+    static func isResumeRefused(_ failure: CurlFailure) -> Bool {
+        failure.code == CURLE_FTP_COULDNT_USE_REST || failure.code == CURLE_BAD_DOWNLOAD_RESUME || failure.code == CURLE_RANGE_ERROR
     }
 
     /// `MLSD` refusé par le serveur : on bascule sur `LIST` une fois pour toutes.

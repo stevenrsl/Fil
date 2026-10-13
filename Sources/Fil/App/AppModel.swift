@@ -19,6 +19,8 @@ final class AppModel {
     var passwordDraft = ""
     private(set) var browser: BrowserModel?
     private(set) var savedPasswordIDs: Set<UUID> = []
+    /// FTP seulement : le serveur de la connexion ouverte accepte FTPS et l'utilisateur n'a pas dit non.
+    private(set) var ftpsOfferedFor: UUID?
     var downloadFolder: URL {
         didSet { preferences.downloadFolder = downloadFolder }
     }
@@ -29,20 +31,24 @@ final class AppModel {
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private let secrets: any SecretStore
     @ObservationIgnored private let makeProvider: (RemoteConnection, String) -> any RemoteFileProvider
+    @ObservationIgnored private let probeFTPS: (RemoteConnection, String) async -> FTPSProbe.Result
     @ObservationIgnored private var connectTask: Task<Void, Never>?
+    @ObservationIgnored private var probeTask: Task<Void, Never>?
 
     init(
         store: ConnectionStore = ConnectionStore(),
         preferences: Preferences = Preferences(),
         secrets: any SecretStore = KeychainStore(),
         transfers: TransferQueue = TransferQueue(),
-        makeProvider: @escaping (RemoteConnection, String) -> any RemoteFileProvider = ProviderFactory.make
+        makeProvider: @escaping (RemoteConnection, String) -> any RemoteFileProvider = ProviderFactory.make,
+        probeFTPS: @escaping (RemoteConnection, String) async -> FTPSProbe.Result = { await FTPSProbe.check($0, password: $1) }
     ) {
         self.store = store
         self.preferences = preferences
         self.secrets = secrets
         self.transfers = transfers
         self.makeProvider = makeProvider
+        self.probeFTPS = probeFTPS
         let snapshot = store.load()
         self.connections = snapshot.connections
         self.lastUsedID = snapshot.lastUsedID
@@ -58,6 +64,12 @@ final class AppModel {
     }
 
     var readiness: Readiness { .connecting(selectedConnection) }
+
+    /// Faut-il montrer la proposition de passer en FTPS sur la page ouverte ?
+    var hasFTPSOffer: Bool {
+        guard let ftpsOfferedFor else { return false }
+        return ftpsOfferedFor == activeConnectionID && phase.isBrowsing
+    }
 
     var hasSavedPassword: Bool {
         selectedConnectionID.map(savedPasswordIDs.contains) ?? false
@@ -172,6 +184,7 @@ final class AppModel {
                     self?.downloadFolder ?? Preferences().downloadFolder
                 }
                 self.phase = .browsing(connection)
+                self.startFTPSProbe(for: connection, password: password)
             } catch {
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
                 self.phase = error is CancellationError ? .choosing : .failed(connection, reason: ReadableError.message(for: error))
@@ -186,6 +199,40 @@ final class AppModel {
         phase = .choosing
     }
 
+    // MARK: Proposition FTPS
+
+    /// Teste en arrière-plan, sur une connexion à part, si ce serveur FTP accepte aussi FTPS.
+    private func startFTPSProbe(for connection: RemoteConnection, password: String) {
+        probeTask?.cancel()
+        ftpsOfferedFor = nil
+        let current = connections.first { $0.id == connection.id } ?? connection
+        guard current.protocol == .ftp, !current.ftpsOfferDismissed else { return }
+        let probe = probeFTPS
+        probeTask = Task { [weak self] in
+            let result = await probe(current, password)
+            guard let self, !Task.isCancelled, result == .available,
+                  case .browsing(let open) = self.phase, open.id == connection.id else { return }
+            self.ftpsOfferedFor = connection.id
+        }
+    }
+
+    /// Passe la connexion en FTPS et la rouvre : les mots de passe et fichiers suivants sont chiffrés.
+    func acceptFTPSOffer() {
+        guard let id = ftpsOfferedFor else { return }
+        ftpsOfferedFor = nil
+        updateProtocol(id, to: .ftps)
+        closeConnection()
+        selectedConnectionID = id
+        connect()
+    }
+
+    /// « Ne plus proposer » : pour ce serveur, définitivement.
+    func dismissFTPSOffer() {
+        guard let id = ftpsOfferedFor else { return }
+        ftpsOfferedFor = nil
+        updateConnection(id) { $0.ftpsOfferDismissed = true }
+    }
+
     /// Ferme la navigation. Les transferts lancés continuent : ils gardent leur fournisseur.
     func closeConnection() {
         leave()
@@ -194,6 +241,9 @@ final class AppModel {
     private func leave() {
         connectTask?.cancel()
         connectTask = nil
+        probeTask?.cancel()
+        probeTask = nil
+        ftpsOfferedFor = nil
         browser = nil
         if phase.isConnecting || phase.isBrowsing { phase = .choosing }
     }

@@ -253,3 +253,144 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(reopened.selectedConnectionID, second)
     }
 }
+
+/// Ce que la sonde a reçu, lisible depuis le fil principal.
+final class ProbeLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(connection: RemoteConnection, password: String)] = []
+    func record(_ connection: RemoteConnection, _ password: String) { lock.withLock { entries.append((connection, password)) } }
+    var calls: [(connection: RemoteConnection, password: String)] { lock.withLock { entries } }
+}
+
+@MainActor
+final class FTPSOfferTests: XCTestCase {
+    private var suite: String!
+    private var defaults: UserDefaults!
+    private var secrets: MemorySecretStore!
+    private var log: ProbeLog!
+    private var openedProtocols: [RemoteProtocol] = []
+
+    override func setUp() async throws {
+        suite = "FilTests.\(Self.self)"
+        UserDefaults().removePersistentDomain(forName: suite)
+        defaults = UserDefaults(suiteName: suite)
+        secrets = MemorySecretStore()
+        log = ProbeLog()
+        openedProtocols = []
+    }
+
+    override func tearDown() async throws {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    private func makeModel(result: FTPSProbe.Result, delay: Duration = .zero) -> AppModel {
+        let log = log!
+        return AppModel(
+            store: ConnectionStore(defaults: defaults),
+            preferences: Preferences(defaults: defaults),
+            secrets: secrets,
+            makeProvider: { [unowned self] connection, _ in
+                MainActor.assumeIsolated { self.openedProtocols.append(connection.protocol) }
+                return MockProvider(connection: connection)
+            },
+            probeFTPS: { connection, password in
+                log.record(connection, password)
+                if delay > .zero { try? await Task.sleep(for: delay) }
+                return result
+            }
+        )
+    }
+
+    private func openConnection(_ model: AppModel, protocol proto: RemoteProtocol) async {
+        model.addConnection()
+        let id = model.selectedConnectionID!
+        model.updateProtocol(id, to: proto)
+        model.updateConnection(id) { $0.host = "exemple.fr"; $0.username = "moi" }
+        model.passwordDraft = "mdp"
+        model.connect()
+        await waitUntil("navigation") { model.phase.isBrowsing }
+    }
+
+    func testOfferedWhenTheServerAcceptsFTPS() async {
+        let model = makeModel(result: .available)
+        await openConnection(model, protocol: .ftp)
+        await waitUntil("proposition") { model.hasFTPSOffer }
+
+        XCTAssertEqual(log.calls.count, 1)
+        XCTAssertEqual(log.calls[0].connection.protocol, .ftp)
+        XCTAssertEqual(log.calls[0].password, "mdp", "la sonde se connecte avec le mot de passe de la connexion")
+    }
+
+    func testNotOfferedWhenFTPSIsUnavailableOrUntrusted() async {
+        for result in [FTPSProbe.Result.unavailable, .untrustedCertificate] {
+            log = ProbeLog()
+            let model = makeModel(result: result)
+            await openConnection(model, protocol: .ftp)
+            await waitUntil("sonde lancée") { self.log.calls.count == 1 }
+            try? await Task.sleep(for: .milliseconds(60))
+            XCTAssertFalse(model.hasFTPSOffer, "\(result) ne doit rien proposer")
+        }
+    }
+
+    func testOnlyPlainFTPConnectionsAreProbed() async {
+        for proto in [RemoteProtocol.sftp, .webdav, .ftps] {
+            let model = makeModel(result: .available)
+            await openConnection(model, protocol: proto)
+            try? await Task.sleep(for: .milliseconds(60))
+            XCTAssertFalse(model.hasFTPSOffer, "\(proto.label) n'a pas à passer en FTPS")
+            model.closeConnection()
+        }
+        XCTAssertEqual(log.calls.count, 0)
+    }
+
+    func testDismissingIsRememberedForThisServer() async {
+        let model = makeModel(result: .available)
+        await openConnection(model, protocol: .ftp)
+        await waitUntil("proposition") { model.hasFTPSOffer }
+
+        model.dismissFTPSOffer()
+        XCTAssertFalse(model.hasFTPSOffer)
+        XCTAssertEqual(ConnectionStore(defaults: defaults).load().connections.first?.ftpsOfferDismissed, true)
+
+        model.closeConnection()
+        model.connect()
+        await waitUntil("navigation") { model.phase.isBrowsing }
+        try? await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(log.calls.count, 1, "on ne sonde plus un serveur dont l'utilisateur ne veut pas")
+        XCTAssertFalse(model.hasFTPSOffer)
+    }
+
+    func testAcceptingSwitchesTheProtocolAndReconnectsEncrypted() async {
+        let model = makeModel(result: .available)
+        await openConnection(model, protocol: .ftp)
+        await waitUntil("proposition") { model.hasFTPSOffer }
+        let id = model.selectedConnectionID!
+
+        model.acceptFTPSOffer()
+        await waitUntil("reconnecté en FTPS") { model.phase.isBrowsing && self.openedProtocols.count == 2 }
+
+        XCTAssertEqual(model.connections.first { $0.id == id }?.protocol, .ftps)
+        XCTAssertEqual(model.connections.first { $0.id == id }?.port, 21, "le port ne bouge pas")
+        XCTAssertEqual(openedProtocols, [.ftp, .ftps])
+        XCTAssertFalse(model.hasFTPSOffer)
+        XCTAssertEqual(ConnectionStore(defaults: defaults).load().connections.first?.protocol, .ftps, "le choix est enregistré")
+        XCTAssertEqual(log.calls.count, 1, "une connexion FTPS n'est plus sondée")
+    }
+
+    func testLeavingBeforeTheProbeAnswersShowsNothing() async {
+        let model = makeModel(result: .available, delay: .milliseconds(150))
+        await openConnection(model, protocol: .ftp)
+        model.closeConnection()
+        try? await Task.sleep(for: .milliseconds(320))
+        XCTAssertFalse(model.hasFTPSOffer)
+        XCTAssertNil(model.ftpsOfferedFor, "une réponse tardive ne ressuscite pas la proposition")
+    }
+
+    func testOfferDoesNotFollowToAnotherConnection() async {
+        let model = makeModel(result: .available)
+        await openConnection(model, protocol: .ftp)
+        await waitUntil("proposition") { model.hasFTPSOffer }
+        model.addConnection()
+        XCTAssertFalse(model.hasFTPSOffer)
+    }
+}

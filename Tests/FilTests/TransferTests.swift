@@ -132,11 +132,13 @@ final class TransferQueueTests: XCTestCase {
         await waitUntil("échec") { if case .failed = queue.items.first?.state { true } else { false } }
         XCTAssertEqual(queue.items.first?.state, .failed("La connexion au serveur s'est interrompue."))
         XCTAssertTrue(queue.canRetry(queue.items[0].id))
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+        // Une coupure garde le partiel : « Réessayer » pourra reprendre.
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["a.txt.filpart"])
 
         await provider.set(transferError: nil)
         queue.retry(queue.items[0].id)
         await waitUntil("nouvel essai réussi") { queue.items.first?.state == .done }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["a.txt"])
     }
 
     func testCancelStopsAndCleansUp() async throws {
@@ -149,7 +151,8 @@ final class TransferQueueTests: XCTestCase {
         await waitUntil("transfert lancé") { (queue.items.first?.transferredBytes ?? 0) > 0 }
         queue.cancel(queue.items[0].id)
         await waitUntil("annulé") { queue.items.first?.state == .cancelled }
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+        // Le nettoyage part en arrière-plan : l'annulation, elle, est immédiate.
+        await waitUntil("partiel effacé") { ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? ["?"]).isEmpty }
     }
 
     func testWaitingTransferCanBeCancelledThenRetried() async throws {

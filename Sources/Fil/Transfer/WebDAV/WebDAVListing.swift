@@ -25,6 +25,16 @@ enum WebDAVListing {
         }
     }
 
+    /// Première entrée d'une réponse `PROPFIND` de profondeur 0 : la ressource elle-même.
+    static func parseEntry(_ data: Data) -> (length: Int64?, isCollection: Bool)? {
+        let collector = MultiStatusCollector()
+        let parser = XMLParser(data: data)
+        parser.shouldProcessNamespaces = true
+        parser.delegate = collector
+        guard parser.parse(), let first = collector.entries.first else { return nil }
+        return (first.length, first.isCollection)
+    }
+
     /// `href` absolu ou chemin seul, encodé ou non, ramené sous la racine WebDAV.
     static func remotePath(forHref href: String, rootPath: String) -> RemotePath? {
         var raw = href.trimmingCharacters(in: .whitespacesAndNewlines)

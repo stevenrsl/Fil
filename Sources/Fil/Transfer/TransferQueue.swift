@@ -18,6 +18,8 @@ final class TransferQueue {
         }
         let provider: any RemoteFileProvider
         let source: Source
+        /// Ce qui a déjà été écrit : c'est lui qui permet de reprendre après une coupure.
+        let ledger = TransferLedger()
         let onFinish: (@MainActor () -> Void)?
     }
 
@@ -93,6 +95,7 @@ final class TransferQueue {
         for item in items where item.isActive { cancel(item.id) }
     }
 
+    /// Relance un transfert interrompu. Il reprend où il s'était arrêté quand c'est sûr, sinon il recommence.
     func retry(_ id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }), !items[index].isActive, jobs[id] != nil else { return }
         items[index].state = .waiting
@@ -100,6 +103,9 @@ final class TransferQueue {
         items[index].completedFiles = 0
         items[index].startedAt = nil
         items[index].finishedAt = nil
+        items[index].resumedFrom = nil
+        items[index].resumeNote = nil
+        items[index].notice = nil
         if items[index].direction == .download, case .remote(_, let folder) = jobs[id]?.source {
             items[index].localURL = folder
         }
@@ -114,10 +120,20 @@ final class TransferQueue {
         }
     }
 
+    /// Retire les transferts terminés. Les échecs abandonnés emportent leurs fichiers partiels.
     func clearFinished() {
         let finished = items.filter { !$0.isActive }.map(\.id)
         items.removeAll { !$0.isActive }
-        finished.forEach { jobs[$0] = nil }
+        for id in finished {
+            if let job = jobs[id] { discard(job) }
+            jobs[id] = nil
+        }
+    }
+
+    /// Fin de session : les partiels locaux des transferts non terminés ne survivent pas à Fil,
+    /// puisque la reprise n'est valable que dans la session qui les a écrits.
+    func removeLocalPartials() {
+        jobs.values.forEach { $0.ledger.removeLocalPartials() }
     }
 
     // MARK: Exécution
@@ -145,24 +161,42 @@ final class TransferQueue {
         }
         tasks[id] = Task { [weak self] in
             let outcome: TransferItem.State
+            var resumable = false
             do {
                 switch job.source {
                 case .remote(let file, let folder):
-                    try await TransferRunner.download(file, into: folder, via: job.provider, report: report)
+                    try await TransferRunner.download(file, into: folder, via: job.provider, ledger: job.ledger, report: report)
                 case .local(let url, let directory):
-                    try await TransferRunner.upload(url, into: directory, via: job.provider, report: report)
+                    try await TransferRunner.upload(url, into: directory, via: job.provider, ledger: job.ledger, report: report)
                 }
                 outcome = .done
             } catch is CancellationError {
                 outcome = .cancelled
             } catch {
-                outcome = Task.isCancelled ? .cancelled : .failed(ReadableError.message(for: error))
+                if Task.isCancelled {
+                    outcome = .cancelled
+                } else {
+                    outcome = .failed(ReadableError.message(for: error))
+                    resumable = Self.isInterruption(error)
+                }
             }
-            self?.finish(id, outcome)
+            self?.finish(id, outcome, resumable: resumable)
         }
     }
 
-    private func finish(_ id: UUID, _ state: TransferItem.State) {
+    /// Une coupure laisse un partiel valable ; un refus du serveur, non.
+    nonisolated static func isInterruption(_ error: Error) -> Bool {
+        if let provider = error as? ProviderError { return provider.isInterruption }
+        if let url = error as? URLError {
+            switch url.code {
+            case .networkConnectionLost, .timedOut, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed: return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    private func finish(_ id: UUID, _ state: TransferItem.State, resumable: Bool) {
         tasks[id] = nil
         if let index = items.firstIndex(where: { $0.id == id }) {
             items[index].state = state
@@ -170,9 +204,34 @@ final class TransferQueue {
             if state == .done, let total = items[index].totalBytes {
                 items[index].transferredBytes = total
             }
+            items[index].resumeNote = (state != .done && resumable) ? resumeNote(for: items[index], ledger: jobs[id]?.ledger) : nil
+        }
+        if let job = jobs[id] {
+            if state == .done {
+                job.ledger.reset()
+            } else if !resumable {
+                discard(job)
+            }
         }
         if state == .done { jobs[id]?.onFinish?() }
         pump()
+    }
+
+    /// Efface les fichiers partiels d'un transfert qu'on ne reprendra pas.
+    private func discard(_ job: Job) {
+        let leftovers = job.ledger.takeLeftovers()
+        guard !leftovers.isEmpty else { return }
+        let provider = job.provider
+        Task.detached(priority: .utility) {
+            await TransferRunner.discard(leftovers, via: provider)
+        }
+    }
+
+    private func resumeNote(for item: TransferItem, ledger: TransferLedger?) -> String? {
+        guard ledger?.hasProgress == true else { return nil }
+        if item.isFolder, item.completedFiles > 0 { return "Réessayer reprend après \(Format.files(item.completedFiles))." }
+        if item.transferredBytes > 0 { return "Réessayer reprend vers \(Format.bytes(item.transferredBytes))." }
+        return "Réessayer reprend là où il s'est arrêté."
     }
 
     private func apply(_ event: TransferEvent, to id: UUID) {
@@ -187,154 +246,15 @@ final class TransferQueue {
             items[index].startedAt = .now
         case .bytes(let bytes):
             items[index].transferredBytes = max(items[index].transferredBytes, bytes)
+        case .resumed(let bytes):
+            items[index].resumedFrom = bytes
+            items[index].transferredBytes = max(items[index].transferredBytes, bytes)
         case .fileCompleted(let count):
             items[index].completedFiles = max(items[index].completedFiles, count)
         case .destination(let url):
             items[index].localURL = url
+        case .warning(let text):
+            items[index].notice = text
         }
-    }
-}
-
-enum TransferEvent: Sendable {
-    case inventory(files: Int)
-    case planned(bytes: Int64, files: Int)
-    case bytes(Int64)
-    case fileCompleted(Int)
-    case destination(URL)
-}
-
-/// Remontée des événements d'un transfert. Les octets sont limités à dix mises à jour par seconde.
-struct TransferReport: Sendable {
-    private let send: @Sendable (TransferEvent) -> Void
-    private let throttle = Throttle(interval: 0.1)
-
-    init(send: @escaping @Sendable (TransferEvent) -> Void) {
-        self.send = send
-    }
-
-    func callAsFunction(_ event: TransferEvent) {
-        if case .bytes = event, !throttle.shouldPass() { return }
-        send(event)
-    }
-
-    /// Octets définitifs d'un fichier : toujours transmis.
-    func settle(_ bytes: Int64) {
-        send(.bytes(bytes))
-    }
-
-    final class Throttle: @unchecked Sendable {
-        private let interval: TimeInterval
-        private let lock = NSLock()
-        private var last: Date = .distantPast
-
-        init(interval: TimeInterval) { self.interval = interval }
-
-        func shouldPass() -> Bool {
-            lock.withLock {
-                let now = Date()
-                guard now.timeIntervalSince(last) >= interval else { return false }
-                last = now
-                return true
-            }
-        }
-    }
-}
-
-/// Déroulé d'un transfert, hors du fil principal.
-enum TransferRunner {
-    static func download(_ file: RemoteFile, into folder: URL, via provider: any RemoteFileProvider, report: TransferReport) async throws {
-        guard file.isDirectory else {
-            report(.planned(bytes: file.byteCount ?? 0, files: 1))
-            let final = try await downloadFile(file, named: file.name, into: folder, via: provider, report: report) { $0 }
-            report(.destination(final))
-            return
-        }
-
-        let entries = try await provider.walk(file.path) { count in report(.inventory(files: count)) }
-        let root = try LocalNaming.reserveFolder(named: file.name, in: folder)
-        report(.destination(root))
-        let files = entries.filter { !$0.isDirectory }
-        report(.planned(bytes: files.reduce(0) { $0 + ($1.byteCount ?? 0) }, files: files.count))
-
-        let base = file.path.components.count
-        func localFolder(for path: RemotePath) -> URL {
-            path.components.dropFirst(base).dropLast().reduce(root) { $0.appendingPathComponent($1, isDirectory: true) }
-        }
-        for directory in entries where directory.isDirectory {
-            try FileManager.default.createDirectory(at: localFolder(for: directory.path).appendingPathComponent(directory.name, isDirectory: true), withIntermediateDirectories: true)
-        }
-        var done: Int64 = 0
-        for (index, child) in files.enumerated() {
-            try Task.checkCancellation()
-            let offset = done
-            let final = try await downloadFile(child, named: child.name, into: localFolder(for: child.path), via: provider, report: report) { offset + $0 }
-            done += (try? FileManager.default.attributesOfItem(atPath: final.path)[.size] as? Int64) ?? child.byteCount ?? 0
-            report.settle(done)
-            report(.fileCompleted(index + 1))
-        }
-    }
-
-    private static func downloadFile(_ file: RemoteFile, named name: String, into folder: URL, via provider: any RemoteFileProvider, report: TransferReport, total: @escaping @Sendable (Int64) -> Int64) async throws -> URL {
-        let (final, partial) = try LocalNaming.reserveFile(named: name, in: folder)
-        do {
-            try await provider.download(file, to: partial) { bytes in report(.bytes(total(bytes))) }
-            return try LocalNaming.complete(partial, as: final)
-        } catch {
-            try? FileManager.default.removeItem(at: partial)
-            throw error
-        }
-    }
-
-    static func upload(_ source: URL, into directory: RemotePath, via provider: any RemoteFileProvider, report: TransferReport) async throws {
-        let isFolder = (try source.resourceValues(forKeys: [.isDirectoryKey])).isDirectory ?? false
-        let destination = directory.appending(LocalNaming.remoteName(for: source))
-        guard isFolder else {
-            let size = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-            report(.planned(bytes: size, files: 1))
-            try await provider.upload(source, to: destination) { report(.bytes($0)) }
-            return
-        }
-
-        let (folders, files) = try inventory(source)
-        report(.inventory(files: files.count))
-        let total = files.reduce(0) { $0 + $1.size }
-        try await provider.ensureDirectory(destination)
-        for folder in folders {
-            try Task.checkCancellation()
-            try await provider.ensureDirectory(destination.appending(folder))
-        }
-        report(.planned(bytes: total, files: files.count))
-        var done: Int64 = 0
-        for (index, file) in files.enumerated() {
-            try Task.checkCancellation()
-            let offset = done
-            try await provider.upload(file.url, to: destination.appending(file.relative)) { report(.bytes(offset + $0)) }
-            done += file.size
-            report.settle(done)
-            report(.fileCompleted(index + 1))
-        }
-    }
-
-    /// Sous-dossiers (parents d'abord) et fichiers d'un dossier local. `.DS_Store` n'est jamais envoyé.
-    static func inventory(_ folder: URL) throws -> (folders: [String], files: [(url: URL, relative: String, size: Int64)]) {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .fileSizeKey]
-        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys) else {
-            throw ProviderError.server("Impossible de lire le dossier « \(folder.lastPathComponent) ».")
-        }
-        let base = folder.standardizedFileURL.pathComponents.count
-        var folders: [String] = []
-        var files: [(URL, String, Int64)] = []
-        for case let url as URL in enumerator {
-            guard url.lastPathComponent != ".DS_Store" else { continue }
-            let values = try url.resourceValues(forKeys: Set(keys))
-            let relative = url.standardizedFileURL.pathComponents.dropFirst(base).joined(separator: "/").precomposedStringWithCanonicalMapping
-            if values.isDirectory == true {
-                folders.append(relative)
-            } else if values.isRegularFile == true {
-                files.append((url, relative, Int64(values.fileSize ?? 0)))
-            }
-        }
-        folders.sort { $0.split(separator: "/").count < $1.split(separator: "/").count }
-        return (folders, files)
     }
 }

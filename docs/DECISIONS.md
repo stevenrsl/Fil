@@ -107,3 +107,43 @@
 **Décision.** `Tools/test-servers.sh` lance sshd (non root), l'Apache de macOS avec mod_dav et pyftpdlib (FTP, FTP sans MLSD, FTPS) dans le dossier temporaire de l'utilisateur (`$TMPDIR/fil-test-servers`, hors de `.build` que `swift package clean` efface). pyftpdlib est installé dans un environnement Python isolé, jamais dans le système ni dans l'application. `Tools/integration-tests.sh` les lance, exécute `IntegrationTests` et les arrête.
 
 **Pourquoi.** Les fournisseurs ne sont crédibles qu'éprouvés contre de vrais serveurs, erreurs comprises. Sans ces serveurs, les tests d'intégration sont ignorés : `swift test` reste rapide et autonome.
+
+## 2026-10-13 · Envoi atomique : nom temporaire puis renommage
+
+**Décision.** Tout fichier envoyé arrive d'abord sous `nom.filpart` ([`RemotePath.partialSibling`](../Sources/Fil/Model/Remote.swift)) et n'est renommé qu'une fois complet ([`TransferRunner.uploadFile`](../Sources/Fil/Transfer/TransferRunner.swift)). Au-delà de 4 Mio, ou après une reprise, la taille reçue par le serveur est vérifiée avant de renommer ; en dessous, la réponse de fin de transfert du serveur suffit, pour ne pas ajouter des allers-retours à chaque petit fichier. Un renommage qui refuse d'écraser (certains serveurs FTP, SFTP sans `posix-rename`) passe par [`moveReplacing`](../Sources/Fil/Transfer/RemoteFileProvider.swift) : l'ancien fichier est mis de côté en `.filbak`, le nouveau prend sa place, puis l'ancien est supprimé ; si le nouveau ne peut pas être placé, l'ancien est rendu.
+
+**Pourquoi.** Envoyer directement sous le nom final laissait, après une coupure, un `index.html` à moitié écrit servi tel quel aux visiteurs. Avec le nom temporaire, la version en ligne est l'ancienne ou la nouvelle entière, jamais un morceau.
+
+**Repli.** Un compte qui refuse le renommage (dépôt seul) ferait échouer tous les envois. Fil le détecte, renvoie directement sous le nom final, l'indique dans le plateau (« envoi direct : ce serveur refuse le renommage ») et s'en souvient pour la session ([`UploadPolicy`](../Sources/Fil/Transfer/TransferRunner.swift)). Ce repli est non atomique, et le dit.
+
+## 2026-10-13 · Reprise des transferts : dans la session, sur ce que Fil a écrit lui-même
+
+**Décision.** « Réessayer » reprend où le transfert s'est arrêté, grâce à un registre par transfert ([`TransferLedger`](../Sources/Fil/Transfer/TransferLedger.swift)). Fil ne reprend **que** ce qu'il sait avoir écrit pendant cette session. Un envoi ne reprend que si la source locale n'a changé ni de taille ni de date ; un téléchargement que si la taille distante n'a pas bougé. Un `.filpart` inconnu (autre session, autre outil) n'est jamais complété. Après une coupure (réseau, délai), le partiel est gardé ; après un refus du serveur ou une annulation, il est effacé. Les partiels locaux disparaissent à la fermeture de Fil. Un dossier repris réutilise son dossier local et saute les fichiers déjà terminés.
+
+**Pourquoi.** Compléter un vieux `.filpart` du même nom, puis le publier par renommage, serait une corruption silencieuse : taille juste, contenu faux. La reprise est un gain de confort ; elle ne doit jamais coûter de l'intégrité. Limite connue : un fichier distant réécrit à la même taille entre deux essais n'est pas détecté (la taille est le seul témoin que FTP et SFTP donnent partout).
+
+## 2026-10-13 · Contrat des fournisseurs : taille, renommage, décalage de reprise
+
+**Décision.** [`RemoteFileProvider`](../Sources/Fil/Transfer/RemoteFileProvider.swift) gagne `size(of:)`, `move(_:to:)`, `canResumeUploads`, et un paramètre `resumingAt` sur `download` et `upload`. La progression est toujours comptée depuis le début du fichier, reprise comprise. Chaque protocole : FTP `SIZE` / `RNFR`+`RNTO` / `REST` et `APPE` ; SFTP `STAT` / `posix-rename@openssh.com` (repli `RENAME`) / lectures et écritures à décalage explicite ; WebDAV `HEAD` / `MOVE` avec `Overwrite: T` / `Range` (repli à zéro si le serveur répond 200 ou 416), sans reprise d'envoi puisqu'un `PUT` n'est pas reprenable.
+
+**Pourquoi.** Le contrat porte seul ce que la logique de transfert doit pouvoir demander, sans qu'aucun type de bibliothèque ne le traverse.
+
+## 2026-10-13 · Piège libcurl : une reprise d'envoi ne saute pas le début de la source
+
+**Décision.** [`FTPProvider.upload`](../Sources/Fil/Transfer/FTP/FTPProvider.swift) positionne lui-même la lecture au décalage avant de lancer libcurl.
+
+**Pourquoi.** Vérifié avec un programme C minimal contre un vrai serveur (libcurl 8.7) : en reprise, libcurl envoie `APPE` et retranche le décalage de la taille annoncée, mais lit la source depuis son début. Résultat : le fichier a la bonne taille et le mauvais contenu, sans aucune erreur. Le test d'intégration compare les octets pour ce motif précis.
+
+## 2026-10-13 · Proposition de passer en FTPS
+
+**Décision.** Une fois connecté en FTP, Fil sonde en arrière-plan, sur une connexion à part, si le serveur accepte FTPS ([`FTPSProbe`](../Sources/Fil/Transfer/FTP/FTPSProbe.swift)). Il propose le passage seulement si la connexion chiffrée s'ouvre, que macOS reconnaît le certificat **et** qu'un listing du dossier de départ passe. La proposition est une bannière sur la page fichiers, avec deux liens : « Passer en FTPS » (change le protocole, enregistre, rouvre) et « Ne plus proposer » (mémorisé par connexion, [`RemoteConnection.ftpsOfferDismissed`](../Sources/Fil/Model/Remote.swift)). Pas de sonde pour le port 990 ni pour un protocole autre que FTP.
+
+**Pourquoi.** Le FTP simple envoie mot de passe et fichiers en clair. Proposer FTPS pour que la connexion suivante échoue serait pire que de se taire, d'où l'exigence du listing et du certificat valide. Un certificat non reconnu ne déclenche rien : le basculement échouerait.
+
+**Limite assumée.** La connexion qui déclenche la sonde est déjà ouverte en clair : l'utilisateur a choisi FTP, Fil ne change pas de protocole à sa place ni ne retarde la connexion. La proposition protège les suivantes.
+
+## 2026-10-13 · Les serveurs de test ne vivent plus dans `.build`
+
+**Décision.** `Tools/test-servers.sh` garde son état dans `$TMPDIR/fil-test-servers` et sait arrêter des serveurs dont le fichier PID a disparu.
+
+**Pourquoi.** `swift package clean` efface `.build/` sans arrêter les serveurs : ils restaient orphelins sur leurs ports.
