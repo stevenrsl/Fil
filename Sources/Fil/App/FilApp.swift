@@ -36,10 +36,12 @@ struct FilApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
+    private let activity = SystemTransferActivity()
 
     override init() {
         super.init()
         let model = model
+        model.transfers.activity = activity
         model.edits.opener = { url in EditorLauncher.open(url, editor: model.editorURL) }
     }
 

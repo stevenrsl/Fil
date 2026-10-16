@@ -36,6 +36,12 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
     public var notice: String?
     /// Après un échec : ce que « Réessayer » va reprendre.
     public var resumeNote: String?
+    /// Dernier signe de vie : un octet, un fichier terminé, un inventaire. Sert à dire qu'un transfert n'avance plus.
+    public var lastProgressAt: Date?
+
+    /// Au-delà, un transfert en cours sans aucun progrès est dit bloqué. Assez long pour qu'un
+    /// serveur lent à ouvrir un gros fichier ne soit pas accusé à tort.
+    public static let stallDelay: TimeInterval = 20
 
     public init(id: UUID = UUID(), direction: Direction, name: String, isFolder: Bool, connectionName: String, remotePath: RemotePath, localURL: URL, totalBytes: Int64? = nil) {
         self.id = id
@@ -73,6 +79,13 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
         return Double(moved) / elapsed
     }
 
+    /// Depuis combien de temps rien n'avance, quand cela dépasse `stallDelay`.
+    public func stalledFor(now: Date) -> TimeInterval? {
+        guard state == .running, let since = lastProgressAt ?? startedAt else { return nil }
+        let still = now.timeIntervalSince(since)
+        return still >= Self.stallDelay ? still : nil
+    }
+
     public func remaining(now: Date) -> TimeInterval? {
         guard let rate = rate(now: now), rate > 0, let totalBytes, totalBytes > transferredBytes else { return nil }
         return Double(totalBytes - transferredBytes) / rate
@@ -98,6 +111,10 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
                 parts.append(Format.bytes(transferredBytes))
             } else {
                 parts.append(direction == .download ? "Ouverture du fichier distant…" : "Ouverture du fichier…")
+            }
+            if let still = stalledFor(now: now) {
+                // Le débit moyen et le temps restant mentiraient : on dit ce qui se passe.
+                return parts.joined(separator: " · ") + " · rien n'avance depuis \(Format.duration(still)), le serveur ou le réseau peine peut-être"
             }
             if let rate = rate(now: now) { parts.append(Format.rate(rate)) }
             if let remaining = remaining(now: now) { parts.append("encore \(Format.duration(remaining))") }

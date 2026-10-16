@@ -24,6 +24,7 @@ struct TransfersTray: View {
                     Text(summary(now: context.date))
                         .font(TypeScale.label)
                         .foregroundStyle(Palette.inkSoft)
+                        .help(queue.hasActive ? "Le Mac ne se met pas en veille tant qu'un transfert tourne. Une notification sonne à la fin si Fil n'est pas devant." : "")
                 }
                 Spacer()
                 if queue.hasFinished {

@@ -4,6 +4,9 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 
 ## Transferts
 
+- **Modification sur place hors de la file.** Les téléchargements et envois de l'éditeur (`EditCoordinator`) ne passent pas par `TransferQueue` : ils n'empêchent pas la veille, ne notifient pas et ne disent pas un blocage.
+- **Notification de fin : vérifier à la main** depuis `Fil.app` (autorisation, son, clic qui ramène Fil). Couvert sans interface par un faux `TransferActivity`.
+- **Transfert bloqué : proposer un geste.** Fil dit qu'un transfert n'avance plus, mais ne propose que « Annuler », qui efface le partiel. Un « Relancer » qui coupe et reprend depuis le partiel serait plus utile.
 - **Reprise entre deux sessions.** « Réessayer » reprend, mais seulement tant que Fil est ouvert : la file et son registre vivent en mémoire, et les partiels locaux sont effacés à la fermeture. Reprendre au lancement demanderait un témoin fiable du contenu (empreinte ou ETag), faute de quoi on risque de compléter un fichier qui a changé.
 - **Reprise d'un envoi WebDAV.** Un `PUT` repart du début ; seuls les téléchargements reprennent (`Range`). À étudier : les extensions de téléversement par morceaux de Nextcloud et d'Infomaniak.
 - **Partiels distants après fermeture de Fil.** Un envoi en échec laisse `nom.filpart` sur le serveur ; « Effacer les terminés » le supprime, mais pas la fermeture de l'application, qui ne peut pas compter sur le réseau.

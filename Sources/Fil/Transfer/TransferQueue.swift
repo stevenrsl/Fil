@@ -1,12 +1,27 @@
 import Foundation
 import Observation
 
+/// Effets système autour de la file : garder le Mac éveillé, prévenir quand tout est fini.
+/// Derrière un protocole pour que les tests n'empêchent pas la veille ni n'envoient de notification.
+@MainActor
+protocol TransferActivity: AnyObject {
+    /// Le premier transfert démarre alors que la file était au repos.
+    func began()
+    /// La file vient de se vider. `outcome` est `nil` quand il n'y a rien à dire.
+    func ended(_ outcome: TransferBatchOutcome?)
+}
+
 /// File des transferts : quelques-uns à la fois, les autres attendent leur tour.
 /// Un transfert garde son fournisseur : il continue même si l'on quitte la connexion.
 @MainActor @Observable
 final class TransferQueue {
     private(set) var items: [TransferItem] = []
     let maxConcurrent: Int
+    @ObservationIgnored weak var activity: (any TransferActivity)?
+
+    /// Transferts lancés depuis que la file s'est mise en route : ce dont parle la notification de fin.
+    @ObservationIgnored private var batch: [UUID] = []
+    @ObservationIgnored private var wasActive = false
 
     @ObservationIgnored private var jobs: [UUID: Job] = [:]
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -44,8 +59,10 @@ final class TransferQueue {
         var parts: [String] = []
         if !running.isEmpty { parts.append("\(Format.count(running.count)) en cours") }
         if waiting > 0 { parts.append("\(Format.count(waiting)) en attente") }
-        let rate = running.compactMap { $0.rate(now: now) }.reduce(0, +)
+        let stalled = running.filter { $0.stalledFor(now: now) != nil }.count
+        let rate = running.filter { $0.stalledFor(now: now) == nil }.compactMap { $0.rate(now: now) }.reduce(0, +)
         if rate > 0 { parts.append(Format.rate(rate)) }
+        if stalled > 0 { parts.append(stalled == 1 ? "1 n'avance plus" : "\(Format.count(stalled)) n'avancent plus") }
         if failed > 0 { parts.append(Format.plural(failed, "échec", "échecs")) }
         return parts.isEmpty ? "Tout est terminé" : parts.joined(separator: " · ")
     }
@@ -104,6 +121,7 @@ final class TransferQueue {
             items[index].state = .cancelled
             items[index].finishedAt = .now
             keepPromise(id, .cancelled)
+            updateActivity()
         }
     }
 
@@ -122,10 +140,13 @@ final class TransferQueue {
         items[index].resumedFrom = nil
         items[index].resumeNote = nil
         items[index].notice = nil
+        items[index].lastProgressAt = nil
         if items[index].direction == .download, case .remote(_, let folder) = jobs[id]?.source {
             items[index].localURL = folder
         }
+        if !batch.contains(id) { batch.append(id) }
         pump()
+        updateActivity()
     }
 
     func canRetry(_ id: UUID) -> Bool {
@@ -157,7 +178,24 @@ final class TransferQueue {
     private func enqueue(_ item: TransferItem, _ job: Job) {
         items.append(item)
         jobs[item.id] = job
+        batch.append(item.id)
         pump()
+        updateActivity()
+    }
+
+    /// Prévient `activity` quand la file passe du repos au travail, et inversement.
+    private func updateActivity() {
+        let active = hasActive
+        guard active != wasActive else { return }
+        wasActive = active
+        if active {
+            activity?.began()
+        } else {
+            // Un glisser vers le Finder a sa propre progression là-bas : il ne compte pas ici.
+            let finished = batch.compactMap { id in items.first { $0.id == id && jobs[id]?.isPromised != true } }
+            batch = []
+            activity?.ended(TransferBatchOutcome.of(finished))
+        }
     }
 
     private func pump() {
@@ -172,6 +210,7 @@ final class TransferQueue {
         guard let job = jobs[id], let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].state = items[index].isFolder ? .preparing : .running
         items[index].startedAt = .now
+        items[index].lastProgressAt = .now
         let report = TransferReport { [weak self] event in
             Task { @MainActor in self?.apply(event, to: id) }
         }
@@ -232,6 +271,7 @@ final class TransferQueue {
         if state == .done { jobs[id]?.onFinish?() }
         keepPromise(id, state)
         pump()
+        updateActivity()
     }
 
     /// Rend à l'application qui attend le fichier final, ou la raison de l'échec. Une seule fois.
@@ -271,6 +311,7 @@ final class TransferQueue {
 
     private func apply(_ event: TransferEvent, to id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }), items[index].isActive else { return }
+        if event.isProgress(comparedTo: items[index]) { items[index].lastProgressAt = .now }
         switch event {
         case .inventory(let files):
             items[index].fileCount = files
@@ -290,6 +331,18 @@ final class TransferQueue {
             items[index].localURL = url
         case .warning(let text):
             items[index].notice = text
+        }
+    }
+}
+
+private extension TransferEvent {
+    /// Ce qui prouve que le transfert vit encore. Un compteur d'octets qui ne monte pas n'en est pas.
+    func isProgress(comparedTo item: TransferItem) -> Bool {
+        switch self {
+        case .bytes(let bytes), .resumed(let bytes): bytes > item.transferredBytes
+        case .fileCompleted(let count): count > item.completedFiles
+        case .inventory, .planned: true
+        case .destination, .warning: false
         }
     }
 }
