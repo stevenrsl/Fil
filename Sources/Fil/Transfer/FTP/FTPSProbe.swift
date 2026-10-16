@@ -34,6 +34,8 @@ enum FTPSProbe {
                     return .available
                 } catch ProviderError.certificateUntrusted {
                     return .untrustedCertificate
+                } catch ProviderError.certificateToConfirm {
+                    return .untrustedCertificate
                 } catch {
                     return .unavailable
                 }

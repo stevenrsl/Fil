@@ -213,6 +213,9 @@ struct BrowserView: View {
             if chosen.count == 1, let only = chosen.first, only.kind != .file {
                 Button("Ouvrir") { browser.open(ids) }
             }
+            if chosen.count == 1, let only = chosen.first, only.kind == .file {
+                Button("Modifier") { browser.edit(only) }
+            }
             Button(chosen.count > 1 ? "Télécharger \(Format.items(chosen.count))" : "Télécharger") { browser.download(chosen) }
                 .disabled(chosen.isEmpty)
             Button("Copier le chemin") {

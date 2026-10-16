@@ -112,6 +112,22 @@ struct ConnectionView: View {
             note(for: connection.protocol)
                 .padding(.top, Spacing.regular)
 
+            if let certificate = connection.trustedCertificate {
+                HStack(spacing: Spacing.tight) {
+                    Label("Certificat approuvé : \(certificate.subject)", systemImage: "checkmark.seal")
+                        .font(TypeScale.label)
+                        .foregroundStyle(Palette.inkSoft)
+                    Text(String(certificate.fingerprint.prefix(23)) + "…")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Palette.inkFaint)
+                        .help("Empreinte SHA-256 : \(certificate.fingerprint)")
+                    Button("Oublier") { model.forgetCertificate(id) }
+                        .buttonStyle(QuietButtonStyle())
+                        .help("La prochaine connexion redemandera de vérifier le certificat.")
+                }
+                .padding(.top, Spacing.tight)
+            }
+
             if case .failed(_, let reason) = model.phase {
                 AlertBanner(text: reason)
                     .padding(.top, Spacing.loose)
@@ -162,11 +178,11 @@ struct ConnectionView: View {
             Label("FTP n'est pas chiffré : identifiant, mot de passe et fichiers circulent en clair. Préfère FTPS ou SFTP si le serveur le permet.", systemImage: "lock.open")
                 .font(TypeScale.label).foregroundStyle(Palette.caution)
         case .ftps:
-            noteText("Chiffrement TLS obligatoire. FTPS explicite sur le port 21, implicite sur le port 990.")
+            noteText("Chiffrement TLS obligatoire. FTPS explicite sur le port 21, implicite sur le port 990. Un certificat que macOS ne reconnaît pas (NAS, serveur personnel) peut être approuvé après vérification de son empreinte.")
         case .sftp:
-            noteText("Les clés SSH, l'agent et ~/.ssh/config sont utilisés. Laisse le mot de passe vide si une clé suffit. Le mot de passe passe par le trousseau de macOS.")
+            noteText("Les clés SSH, l'agent et ~/.ssh/config sont utilisés. Laisse le mot de passe vide si une clé suffit. Le mot de passe passe par le trousseau de macOS. À la première connexion, Fil te montre l'empreinte du serveur pour que tu la vérifies.")
         case .webdav:
-            noteText("Connexion HTTPS. La racine est le chemin WebDAV du serveur, par exemple /remote.php/dav/files/moi pour Nextcloud.")
+            noteText("Connexion HTTPS. La racine est le chemin WebDAV du serveur, par exemple /remote.php/dav/files/moi pour Nextcloud. Un certificat auto-signé peut être approuvé après vérification de son empreinte.")
         case .kdrive:
             noteText("Indique l'identifiant de ton kDrive (les chiffres de son adresse) et ton e-mail Infomaniak. Avec la double authentification, crée un mot de passe d'application.")
         case .protonDrive:

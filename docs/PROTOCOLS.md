@@ -27,3 +27,13 @@ Tous les fournisseurs respectent `RemoteFileProvider`. Ils n'exposent aucun type
 | WebDAV | `HEAD`, repli `PROPFIND` | `MOVE` + `Overwrite: T` | `Range`, repli à zéro si 200 ou 416 | non : un `PUT` repart du début |
 
 Dans tous les cas, l'envoi se fait vers `nom.filpart`, la taille est vérifiée avant le renommage au-delà de 4 Mio ou après une reprise, et un serveur qui refuse le renommage reçoit un envoi direct, signalé dans le plateau.
+
+## Confiance par protocole
+
+| | Première rencontre | Ce qui est retenu | Si ça change |
+| --- | --- | --- | --- |
+| SFTP | connexion d'essai sans authentification, empreinte montrée | la clé, dans le fichier de Fil | refus (« l'empreinte a changé ») |
+| FTPS | certificat relevé par `AUTH TLS` puis TLS sur place, empreinte SHA-256 montrée | le certificat, épinglé pour la connexion | refus (« le certificat a changé ») |
+| WebDAV (HTTPS) | certificat du défi de confiance d'`URLSession` | idem | idem |
+
+Un certificat que macOS reconnaît n'est jamais épinglé : il passe comme avant.

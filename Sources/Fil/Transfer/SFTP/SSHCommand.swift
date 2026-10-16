@@ -6,17 +6,44 @@ enum SSHCommand {
 
     /// Les options en ligne de commande priment sur `~/.ssh/config`, qui reste lu pour le reste
     /// (alias d'hôte, clés, `ProxyJump`…). Le port 22 n'est pas imposé pour laisser un alias choisir le sien.
-    static func arguments(for connection: RemoteConnection, extraOptions: [String] = []) -> [String] {
+    ///
+    /// Vérification **stricte** de la clé du serveur : un serveur inconnu n'est jamais accepté en silence.
+    /// Il faut d'abord que l'utilisateur ait vérifié son empreinte (`HostKeyDiscovery`), après quoi la clé
+    /// vit dans le fichier de Fil, que `ssh` lit en plus de `known_hosts` sans jamais y écrire.
+    static func arguments(for connection: RemoteConnection, extraOptions: [String] = [], trustedHosts: URL? = FilKnownHosts.standard.url) -> [String] {
+        var arguments = ["-T", "-x", "-a", "-e", "none", "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no"]
+        if let option = globalKnownHostsOption(trustedHosts) { arguments += ["-o", option] }
+        arguments += ["-o", "BatchMode=no"]
+        arguments += connectionOptions(for: connection, extraOptions: extraOptions)
+        arguments += ["-s", "--", connection.resolvedHost, "sftp"]
+        return arguments
+    }
+
+    /// Connexion d'essai pour relever la clé d'un serveur inconnu. Ses options passent avant toutes les autres
+    /// (`ssh` garde la première valeur d'une option) : rien n'est lu ni écrit hors du fichier jetable,
+    /// et aucun identifiant n'est envoyé (`PreferredAuthentications=none`).
+    static func discoveryArguments(for connection: RemoteConnection, extraOptions: [String] = [], knownHostsFile: URL) -> [String] {
         var arguments = [
             "-T", "-x", "-a", "-e", "none",
+            "-o", "UserKnownHostsFile=\(knownHostsFile.path)",
+            "-o", "GlobalKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "UpdateHostKeys=no",
+            "-o", "PreferredAuthentications=none",
+            "-o", "BatchMode=yes"
+        ]
+        arguments += connectionOptions(for: connection, extraOptions: extraOptions)
+        arguments += ["--", connection.resolvedHost, "true"]
+        return arguments
+    }
+
+    private static func connectionOptions(for connection: RemoteConnection, extraOptions: [String]) -> [String] {
+        var arguments = [
             "-o", "ClearAllForwardings=yes",
             "-o", "PermitLocalCommand=no",
-            "-o", "BatchMode=no",
             "-o", "ConnectTimeout=15",
             "-o", "ServerAliveInterval=15",
             "-o", "ServerAliveCountMax=3",
-            // Première connexion : l'empreinte est mémorisée. Empreinte changée : refus.
-            "-o", "StrictHostKeyChecking=accept-new",
             "-o", "NumberOfPasswordPrompts=1"
         ]
         arguments += extraOptions
@@ -27,8 +54,13 @@ enum SSHCommand {
         if !user.isEmpty {
             arguments += ["-l", user]
         }
-        arguments += ["-s", "--", connection.resolvedHost, "sftp"]
         return arguments
+    }
+
+    /// Les fichiers du système, plus celui de Fil. Un chemin avec des guillemets ne peut pas être cité : il est ignoré.
+    private static func globalKnownHostsOption(_ trustedHosts: URL?) -> String? {
+        guard let path = trustedHosts?.path, !path.contains("\""), !path.contains("\\") else { return nil }
+        return "GlobalKnownHostsFile=\"/etc/ssh/ssh_known_hosts\" \"/etc/ssh/ssh_known_hosts2\" \"\(path)\""
     }
 
     /// Le mot de passe ne passe ni par les arguments ni par l'environnement : `ssh` le demande
@@ -45,7 +77,14 @@ enum SSHCommand {
     /// Traduit la sortie d'erreur d'un `ssh` terminé en raison lisible.
     static func describeExit(status: Int32, errorOutput: String, host: String, port: Int) -> ProviderError {
         let text = errorOutput.lowercased()
-        if text.contains("remote host identification has changed") || text.contains("host key verification failed") {
+        if text.contains("remote host identification has changed") {
+            return .hostKeyChanged(host)
+        }
+        // « No ED25519 host key is known for … and you have requested strict checking » : serveur jamais vu.
+        if text.contains("host key is known for") {
+            return .hostKeyUnknown([])
+        }
+        if text.contains("host key verification failed") {
             return .hostKeyChanged(host)
         }
         if text.contains("could not resolve hostname") || text.contains("nodename nor servname") {
@@ -72,7 +111,7 @@ enum SSHCommand {
         let meaningful = errorOutput
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .last { !$0.isEmpty && !$0.lowercased().hasPrefix("warning:") }
+            .last { !$0.isEmpty && !$0.lowercased().hasPrefix("warning:") && !$0.lowercased().hasPrefix("debug") }
         if let meaningful {
             return .server("La connexion SSH a échoué : \(meaningful)")
         }

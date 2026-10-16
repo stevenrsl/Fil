@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Bindable var model: AppModel
@@ -28,10 +29,47 @@ struct SettingsView: View {
                 .font(TypeScale.label)
                 .foregroundStyle(Palette.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Palette.hairline).padding(.vertical, Spacing.tight)
+
+            Text("Modification")
+                .font(TypeScale.section)
+                .foregroundStyle(Palette.ink)
+            HStack(spacing: Spacing.regular) {
+                Image(systemName: "pencil")
+                    .foregroundStyle(Palette.accentInk)
+                Text(model.editorURL.map { FileManager.default.displayName(atPath: $0.path) } ?? "Choisi par macOS")
+                    .font(TypeScale.body)
+                    .foregroundStyle(Palette.ink)
+                Spacer()
+                if model.editorURL != nil {
+                    Button("Par défaut") { model.editorURL = nil }
+                        .buttonStyle(QuietButtonStyle(tint: Palette.inkSoft))
+                }
+                Button("Choisir…", action: chooseEditor)
+                    .buttonStyle(QuietButtonStyle())
+            }
+            Text("« Modifier » ouvre le fichier distant dans cet éditeur et renvoie chaque enregistrement au serveur. Sans choix, Fil prend l'application de macOS pour ce fichier, ou ton éditeur de texte si c'est un navigateur.")
+                .font(TypeScale.label)
+                .foregroundStyle(Palette.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(Spacing.loose)
         .frame(width: 480)
         .background(Palette.ground)
+    }
+
+    private func chooseEditor() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Choisir"
+        if panel.runModal() == .OK, let url = panel.url {
+            model.editorURL = url
+        }
     }
 
     private func chooseFolder() {

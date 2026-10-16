@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// WebDAV en HTTPS, kDrive compris. Les chemins de navigation sont relatifs à la racine WebDAV.
 final class WebDAVProvider: RemoteFileProvider {
@@ -15,7 +16,10 @@ final class WebDAVProvider: RemoteFileProvider {
         self.root = root
         self.rootPath = root.path.removingPercentEncoding ?? root.path
         let user = connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        relay = WebDAVSessionRelay(credential: user.isEmpty ? nil : URLCredential(user: user, password: password, persistence: .forSession))
+        relay = WebDAVSessionRelay(
+            credential: user.isEmpty ? nil : URLCredential(user: user, password: password, persistence: .forSession),
+            pinnedSHA256: connection.trustedCertificate?.sha256
+        )
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.httpMaximumConnectionsPerHost = 4
@@ -58,7 +62,7 @@ final class WebDAVProvider: RemoteFileProvider {
             var request = makeRequest(url(for: file.path, directory: false), method: "GET")
             if start > 0 { request.setValue("bytes=\(start)-", forHTTPHeaderField: "Range") }
             do {
-                let response = try await relay.run(session.downloadTask(with: request), destination: destination, offset: start, progress: progress)
+                let response = try await run(session.downloadTask(with: request), destination: destination, offset: start, progress: progress)
                 // 416 : le fichier a changé de taille depuis le début du téléchargement. On recommence.
                 if start > 0, (response as? HTTPURLResponse)?.statusCode == 416 {
                     start = 0
@@ -75,14 +79,14 @@ final class WebDAVProvider: RemoteFileProvider {
     func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         var request = makeRequest(url(for: destination, directory: false), method: "PUT")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let response = try await relay.run(session.uploadTask(with: request, fromFile: source), destination: nil, progress: progress)
+        let response = try await run(session.uploadTask(with: request, fromFile: source), destination: nil, progress: progress)
         try check(response, subject: destination.name)
     }
 
     func size(of path: RemotePath) async throws -> Int64? {
         var head = makeRequest(url(for: path, directory: false), method: "HEAD")
         head.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let (_, response) = try await session.data(for: head)
+        let (_, response) = try await send(head)
         guard let http = response as? HTTPURLResponse else { throw ProviderError.server("Le serveur a répondu de façon inattendue.") }
         switch http.statusCode {
         case 200..<300:
@@ -113,23 +117,47 @@ final class WebDAVProvider: RemoteFileProvider {
         request.setValue(url(for: destination, directory: false).absoluteString, forHTTPHeaderField: "Destination")
         // MOVE remplace atomiquement côté serveur : pas de mise de côté à faire ici.
         request.setValue("T", forHTTPHeaderField: "Overwrite")
-        let (_, response) = try await session.data(for: request)
+        let (_, response) = try await send(request)
         try check(response, subject: destination.name)
     }
 
     func makeDirectory(_ path: RemotePath) async throws {
-        let (_, response) = try await session.data(for: makeRequest(url(for: path, directory: true), method: "MKCOL"))
+        let (_, response) = try await send(makeRequest(url(for: path, directory: true), method: "MKCOL"))
         if (response as? HTTPURLResponse)?.statusCode == 405 { throw ProviderError.alreadyExists(path.name) }
         try check(response, subject: path.name)
     }
 
     func delete(_ file: RemoteFile) async throws {
         // DELETE sur une collection est récursif par définition (RFC 4918, 9.6.1).
-        let (_, response) = try await session.data(for: makeRequest(url(for: file.path, directory: file.isDirectory), method: "DELETE"))
+        let (_, response) = try await send(makeRequest(url(for: file.path, directory: file.isDirectory), method: "DELETE"))
         try check(response, subject: file.name)
     }
 
     // MARK: Mécanique
+
+    private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch {
+            throw translate(error)
+        }
+    }
+
+    private func run(_ task: URLSessionTask, destination: URL?, offset: Int64 = 0, progress: @escaping ProgressHandler) async throws -> URLResponse {
+        do {
+            return try await relay.run(task, destination: destination, offset: offset, progress: progress)
+        } catch {
+            throw translate(error)
+        }
+    }
+
+    /// Un certificat refusé coupe la requête : l'erreur d'`URLSession` ne dit rien. Le relais, lui, a vu le certificat.
+    private func translate(_ error: Error) -> Error {
+        guard let presented = relay.takeUntrustedCertificate() else { return error }
+        // Approuvé autrefois et plus reconnu : on refuse. Jamais vu : on le montre à l'utilisateur.
+        if connection.trustedCertificate != nil { return ProviderError.certificateChanged(host: connection.resolvedHost) }
+        return ProviderError.certificateToConfirm(presented)
+    }
 
     private func propfind(_ path: RemotePath, depth: String, directory: Bool = true) async throws -> Data {
         var request = makeRequest(url(for: path, directory: directory), method: "PROPFIND")
@@ -139,7 +167,7 @@ final class WebDAVProvider: RemoteFileProvider {
             <?xml version="1.0" encoding="utf-8"?>
             <d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>
             """.utf8)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request)
         if (response as? HTTPURLResponse)?.statusCode == 405 {
             throw ProviderError.server("Cette adresse ne répond pas comme un serveur WebDAV. Vérifie le chemin de la racine WebDAV.")
         }
@@ -197,11 +225,22 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
     }
 
     private let credential: URLCredential?
+    private let pinnedSHA256: String?
     private let lock = NSLock()
     private var pending: [Int: Pending] = [:]
+    private var untrusted: CertificateInfo?
 
-    init(credential: URLCredential?) {
+    init(credential: URLCredential?, pinnedSHA256: String? = nil) {
         self.credential = credential
+        self.pinnedSHA256 = pinnedSHA256
+    }
+
+    /// Le dernier certificat refusé, une seule fois.
+    func takeUntrustedCertificate() -> CertificateInfo? {
+        lock.withLock {
+            defer { untrusted = nil }
+            return untrusted
+        }
     }
 
     func run(_ task: URLSessionTask, destination: URL?, offset: Int64 = 0, progress: @escaping ProgressHandler) async throws -> URLResponse {
@@ -297,6 +336,28 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
                 completionHandler(.useCredential, credential)
             } else {
                 completionHandler(.rejectProtectionSpace, nil)
+            }
+        case NSURLAuthenticationMethodServerTrust:
+            guard let trust = challenge.protectionSpace.serverTrust else {
+                completionHandler(.performDefaultHandling, nil)
+                return
+            }
+            var failure: CFError?
+            if SecTrustEvaluateWithError(trust, &failure) {
+                completionHandler(.performDefaultHandling, nil)
+                return
+            }
+            // macOS ne reconnaît pas ce certificat. Il n'est accepté que s'il est celui que l'utilisateur a approuvé.
+            guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            let der = SecCertificateCopyData(leaf) as Data
+            if let pinnedSHA256, CertificateInfo.sha256Hex(of: der) == pinnedSHA256 {
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                lock.withLock { untrusted = CertificateInfo(der: der) }
+                completionHandler(.cancelAuthenticationChallenge, nil)
             }
         default:
             completionHandler(.performDefaultHandling, nil)

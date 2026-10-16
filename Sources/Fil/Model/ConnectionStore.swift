@@ -51,10 +51,17 @@ struct ConnectionStore {
 /// Réglages de l'application, hors connexions.
 struct Preferences {
     private static let downloadFolderKey = "fil.downloadFolder"
+    private static let editorKey = "fil.editor"
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    /// L'application qui ouvre les fichiers à modifier. `nil` : celle que macOS associe au fichier.
+    var editorURL: URL? {
+        get { defaults.string(forKey: Self.editorKey).map { URL(fileURLWithPath: $0) } }
+        nonmutating set { defaults.set(newValue?.path, forKey: Self.editorKey) }
     }
 
     var downloadFolder: URL {

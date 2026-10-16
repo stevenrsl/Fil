@@ -13,13 +13,14 @@ STATE="${FIL_TEST_SERVERS:-${${TMPDIR:-/tmp}%/}/fil-test-servers}"
 STATE="${STATE%/}"
 SFTP_PORT=2222
 WEBDAV_PORT=8088
+WEBDAVS_PORT=8443
 FTP_PORT=2121
 FTP_LEGACY_PORT=2122
 FTPS_PORT=2990
 USER_NAME=fil
 PASSWORD=fil-secret
 
-PORTS=($SFTP_PORT $WEBDAV_PORT $FTP_PORT $FTP_LEGACY_PORT $FTPS_PORT)
+PORTS=($SFTP_PORT $WEBDAV_PORT $WEBDAVS_PORT $FTP_PORT $FTP_LEGACY_PORT $FTPS_PORT)
 
 stop() {
   for pidfile in "$STATE"/*.pid(N); do
@@ -74,13 +75,22 @@ EOF
   # sshd se relance depuis / : tous les chemins doivent être absolus.
   /usr/sbin/sshd -f "$STATE/sshd_config" -E "$STATE/sshd.log"
 
-  # WebDAV : Apache livré avec macOS, sur un port haut.
+  # Certificats auto-signés : FTPS (plus bas), WebDAV HTTPS, et un autre qui ne correspond à aucun serveur.
+  for name in webdav other; do
+    [[ -f $name-cert.pem ]] || openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
+        -keyout $name-key.pem -out $name-cert.pem -subj "/CN=127.0.0.1" \
+        -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
+  done
+
+  # WebDAV : Apache livré avec macOS, sur un port haut (HTTP et HTTPS).
   htpasswd -bc htpasswd "$USER_NAME" "$PASSWORD" 2>/dev/null
   cat > httpd.conf <<EOF
 ServerRoot "/usr"
 ServerName 127.0.0.1
 Listen 127.0.0.1:$WEBDAV_PORT
 PidFile "$STATE/httpd.pid"
+# Avec deux ports d'écoute (HTTP et HTTPS), Apache a besoin d'un verrou d'acceptation ; sans root, il le met ici.
+Mutex file:$STATE default
 LoadModule mpm_prefork_module libexec/apache2/mod_mpm_prefork.so
 LoadModule unixd_module libexec/apache2/mod_unixd.so
 LoadModule authn_core_module libexec/apache2/mod_authn_core.so
@@ -92,6 +102,15 @@ LoadModule alias_module libexec/apache2/mod_alias.so
 LoadModule dav_module libexec/apache2/mod_dav.so
 LoadModule dav_fs_module libexec/apache2/mod_dav_fs.so
 LoadModule log_config_module libexec/apache2/mod_log_config.so
+LoadModule ssl_module libexec/apache2/mod_ssl.so
+LoadModule socache_shmcb_module libexec/apache2/mod_socache_shmcb.so
+Listen 127.0.0.1:$WEBDAVS_PORT
+SSLSessionCache "shmcb:$STATE/ssl_scache(512000)"
+<VirtualHost 127.0.0.1:$WEBDAVS_PORT>
+  SSLEngine on
+  SSLCertificateFile "$STATE/webdav-cert.pem"
+  SSLCertificateKeyFile "$STATE/webdav-key.pem"
+</VirtualHost>
 ErrorLog "$STATE/httpd-error.log"
 LogFormat "%h %u \"%r\" %>s" simple
 CustomLog "$STATE/httpd-access.log" simple
@@ -121,6 +140,7 @@ EOF
 
   for port in $PORTS; do wait_port $port; done
 
+  sha256() { openssl x509 -in "$1" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f'; }
   cat > env <<EOF
 FIL_IT_USER=$USER_NAME
 FIL_IT_PASSWORD=$PASSWORD
@@ -128,12 +148,17 @@ FIL_IT_FTP_PORT=$FTP_PORT
 FIL_IT_FTP_LEGACY_PORT=$FTP_LEGACY_PORT
 FIL_IT_FTPS_PORT=$FTPS_PORT
 FIL_IT_FTPS_CA=$STATE/ftps-cert.pem
+FIL_IT_FTPS_SHA256=$(sha256 ftps-cert.pem)
+FIL_IT_OTHER_CERT=$STATE/other-cert.pem
 FIL_IT_SFTP_PORT=$SFTP_PORT
 FIL_IT_SFTP_USER=$(whoami)
 FIL_IT_SFTP_KEY=$STATE/client_ed25519
+FIL_IT_SFTP_FINGERPRINT=$(ssh-keygen -lf host_ed25519.pub | awk '{print $2}')
 FIL_IT_SFTP_KNOWN_HOSTS=$STATE/known_hosts
 FIL_IT_SFTP_WRONG_KNOWN_HOSTS=$STATE/wrong_known_hosts
 FIL_IT_WEBDAV_URL=http://127.0.0.1:$WEBDAV_PORT/dav
+FIL_IT_WEBDAVS_URL=https://127.0.0.1:$WEBDAVS_PORT/dav
+FIL_IT_WEBDAVS_SHA256=$(sha256 webdav-cert.pem)
 EOF
   echo "Serveurs prêts. Variables : $STATE/env"
 }

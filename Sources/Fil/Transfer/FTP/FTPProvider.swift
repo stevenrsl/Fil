@@ -12,6 +12,8 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
     private let password: String
     /// Autorités de certification supplémentaires. Réservé aux tests d'intégration.
     private let certificateAuthorities: String?
+    /// Le certificat que l'utilisateur a approuvé pour ce serveur : l'unique autorité reconnue, nom de serveur non vérifié.
+    private let pinnedCertificate: URL?
 
     // Confinés à `browsing`.
     private let browsing = DispatchQueue(label: "fil.ftp.browsing", qos: .userInitiated)
@@ -20,10 +22,11 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
 
     private static let transfers = DispatchQueue(label: "fil.ftp.transfers", qos: .utility, attributes: .concurrent)
 
-    init(connection: RemoteConnection, password: String, certificateAuthorities: String? = nil) {
+    init(connection: RemoteConnection, password: String, certificateAuthorities: String? = nil, pinnedCertificates: PinnedCertificates = .standard) {
         self.connection = connection
         self.password = password
         self.certificateAuthorities = certificateAuthorities
+        self.pinnedCertificate = connection.trustedCertificate.flatMap { pinnedCertificates.pemURL(for: $0.sha256) }
         self.address = FTPAddress(connection: connection)
     }
 
@@ -35,6 +38,22 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
     // MARK: RemoteFileProvider
 
     func connect() async throws -> RemotePath {
+        do {
+            return try await openSession()
+        } catch ProviderError.certificateUntrusted {
+            throw await explainUntrustedCertificate()
+        }
+    }
+
+    /// Un certificat refusé n'est pas une impasse : soit il a changé depuis qu'on l'a approuvé (on refuse),
+    /// soit on ne l'a jamais vu (on le relève pour que l'utilisateur le vérifie).
+    private func explainUntrustedCertificate() async -> ProviderError {
+        if pinnedCertificate != nil { return .certificateChanged(host: connection.resolvedHost) }
+        let presented = try? await CertificateReader.readFTPS(host: connection.resolvedHost, port: connection.port, implicit: security == .implicit)
+        return presented.map(ProviderError.certificateToConfirm) ?? .certificateUntrusted
+    }
+
+    private func openSession() async throws -> RemotePath {
         let home: RemotePath = try await run(on: browsing) { flag in
             let handle = try self.sharedHandle()
             let transfer = CurlTransfer(cancellation: flag)
@@ -228,7 +247,10 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
         if security != .none {
             handle.set(CURLOPT_USE_SSL, Int(CURLUSESSL_ALL.rawValue))
         }
-        if let certificateAuthorities {
+        if let pinnedCertificate {
+            handle.set(CURLOPT_CAINFO, pinnedCertificate.path)
+            handle.set(CURLOPT_SSL_VERIFYHOST, 0)
+        } else if let certificateAuthorities {
             handle.set(CURLOPT_CAINFO, certificateAuthorities)
         }
     }

@@ -24,13 +24,19 @@ final class AppModel {
     var downloadFolder: URL {
         didSet { preferences.downloadFolder = downloadFolder }
     }
+    var editorURL: URL? {
+        didSet { preferences.editorURL = editorURL }
+    }
     let transfers: TransferQueue
+    let edits: EditCoordinator
 
     @ObservationIgnored private var lastUsedID: UUID?
     @ObservationIgnored private let store: ConnectionStore
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private let secrets: any SecretStore
     @ObservationIgnored private let makeProvider: (RemoteConnection, String) -> any RemoteFileProvider
+    @ObservationIgnored private let knownHosts: FilKnownHosts
+    @ObservationIgnored private let certificates: PinnedCertificates
     @ObservationIgnored private let probeFTPS: (RemoteConnection, String) async -> FTPSProbe.Result
     @ObservationIgnored private var connectTask: Task<Void, Never>?
     @ObservationIgnored private var probeTask: Task<Void, Never>?
@@ -40,21 +46,34 @@ final class AppModel {
         preferences: Preferences = Preferences(),
         secrets: any SecretStore = KeychainStore(),
         transfers: TransferQueue = TransferQueue(),
+        edits: EditCoordinator = EditCoordinator(),
         makeProvider: @escaping (RemoteConnection, String) -> any RemoteFileProvider = ProviderFactory.make,
+        knownHosts: FilKnownHosts = .standard,
+        certificates: PinnedCertificates = .standard,
         probeFTPS: @escaping (RemoteConnection, String) async -> FTPSProbe.Result = { await FTPSProbe.check($0, password: $1) }
     ) {
         self.store = store
         self.preferences = preferences
         self.secrets = secrets
         self.transfers = transfers
+        self.edits = edits
         self.makeProvider = makeProvider
+        self.knownHosts = knownHosts
+        self.certificates = certificates
         self.probeFTPS = probeFTPS
         let snapshot = store.load()
         self.connections = snapshot.connections
         self.lastUsedID = snapshot.lastUsedID
         self.downloadFolder = preferences.downloadFolder
+        self.editorURL = preferences.editorURL
         self.selectedConnectionID = snapshot.connections.first { $0.id == snapshot.lastUsedID }?.id ?? snapshot.connections.first?.id
         self.savedPasswordIDs = Set(snapshot.connections.map(\.id).filter(secrets.hasPassword))
+        edits.purgeStaleFolders()
+        // Un enregistrement vient d'arriver sur le serveur : si c'est le dossier affiché, il se met à jour.
+        edits.onRemoteChanged = { [weak self] connectionID, directory in
+            guard let browser = self?.browser, browser.connection.id == connectionID, browser.path == directory else { return }
+            browser.refresh()
+        }
     }
 
     // MARK: Lecture
@@ -89,7 +108,7 @@ final class AppModel {
     func select(_ id: UUID) {
         if let active = activeConnectionID, active != id { leave() }
         selectedConnectionID = id
-        if case .failed(let connection, _) = phase, connection.id != id { phase = .choosing }
+        if let shown = phase.connection, shown.id != id, !phase.isBrowsing, !phase.isConnecting { phase = .choosing }
     }
 
     func addConnection() {
@@ -115,9 +134,16 @@ final class AppModel {
 
     func updateConnection(_ id: UUID, _ change: (inout RemoteConnection) -> Void) {
         guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
-        var connection = connections[index]
+        let before = connections[index]
+        var connection = before
         change(&connection)
-        if connection != connections[index] { connections[index] = connection }
+        // Un certificat approuvé ne vaut que pour le serveur qu'on a vu : une autre adresse, un autre port
+        // ou un autre protocole, et la confiance ne suit pas.
+        if connection.trustedCertificate == before.trustedCertificate,
+           connection.host != before.host || connection.port != before.port || connection.protocol != before.protocol {
+            connection.trustedCertificate = nil
+        }
+        if connection != before { connections[index] = connection }
     }
 
     func updateProtocol(_ id: UUID, to value: RemoteProtocol) {
@@ -180,14 +206,14 @@ final class AppModel {
             do {
                 let home = try await provider.connect()
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
-                self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers) { [weak self] in
+                self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers, edits: self.edits) { [weak self] in
                     self?.downloadFolder ?? Preferences().downloadFolder
                 }
                 self.phase = .browsing(connection)
                 self.startFTPSProbe(for: connection, password: password)
             } catch {
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
-                self.phase = error is CancellationError ? .choosing : .failed(connection, reason: ReadableError.message(for: error))
+                self.phase = Self.phase(after: error, for: connection)
             }
         }
     }
@@ -197,6 +223,55 @@ final class AppModel {
         connectTask?.cancel()
         connectTask = nil
         phase = .choosing
+    }
+
+    /// Où mène un échec de connexion : une confirmation à demander, un abandon, ou une raison à lire.
+    private static func phase(after error: Error, for connection: RemoteConnection) -> Phase {
+        if error is CancellationError { return .choosing }
+        switch error as? ProviderError {
+        case .hostKeyUnknown(let keys) where !keys.isEmpty: return .confirming(connection, .hostKey(keys))
+        case .certificateToConfirm(let certificate): return .confirming(connection, .certificate(certificate))
+        default: return .failed(connection, reason: ReadableError.message(for: error))
+        }
+    }
+
+    // MARK: Confiance
+
+    /// L'utilisateur a vérifié l'empreinte : on la retient, puis on se connecte pour de bon.
+    func confirmTrust() {
+        guard case .confirming(let connection, let request) = phase else { return }
+        do {
+            switch request {
+            case .hostKey(let keys):
+                try knownHosts.trust(keys)
+            case .certificate(let certificate):
+                try certificates.save(certificate)
+                updateConnection(connection.id) {
+                    $0.trustedCertificate = TrustedCertificate(sha256: certificate.sha256, subject: certificate.subject)
+                }
+            }
+        } catch {
+            phase = .failed(connection, reason: ReadableError.message(for: error))
+            return
+        }
+        selectedConnectionID = connection.id
+        phase = .choosing
+        connect()
+    }
+
+    func declineTrust() {
+        guard phase.isConfirming else { return }
+        phase = .choosing
+    }
+
+    /// Retire l'approbation d'un certificat : la prochaine connexion redemandera de le vérifier.
+    func forgetCertificate(_ id: UUID) {
+        guard let pinned = connections.first(where: { $0.id == id })?.trustedCertificate else { return }
+        updateConnection(id) { $0.trustedCertificate = nil }
+        // Le fichier ne sert plus qu'aux connexions qui approuvent encore ce certificat.
+        if !connections.contains(where: { $0.trustedCertificate?.sha256 == pinned.sha256 }) {
+            certificates.remove(pinned.sha256)
+        }
     }
 
     // MARK: Proposition FTPS

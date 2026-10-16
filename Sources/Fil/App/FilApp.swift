@@ -37,6 +37,12 @@ struct FilApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
+    override init() {
+        super.init()
+        let model = model
+        model.edits.opener = { url in EditorLauncher.open(url, editor: model.editorURL) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Lancé par `swift run`, sans paquet .app : sans cela, la fenêtre n'aurait ni Dock ni clavier.
         // Un vrai paquet est activé par macOS ; on ne lui force pas la main.
@@ -50,9 +56,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model.transfers.removeLocalPartials()
+        model.edits.removeSyncedCopies()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Des modifications pas encore parties : on le dit avant de quitter, et la copie reste sur le disque.
+        let unsent = model.edits.unsentSessions
+        if !unsent.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = unsent.count == 1 ? "« \(unsent[0].name) » n'a pas été envoyé." : "\(Format.count(unsent.count)) fichiers modifiés n'ont pas été envoyés."
+            alert.informativeText = "Si tu quittes maintenant, ces modifications ne partent pas vers le serveur. Les copies restent une semaine dans \(EditCoordinator.defaultCacheFolder.path)."
+            alert.addButton(withTitle: "Rester")
+            alert.addButton(withTitle: "Quitter quand même")
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        }
         let active = model.transfers.activeCount
         guard active > 0 else { return .terminateNow }
         let alert = NSAlert()
@@ -99,6 +116,9 @@ struct FilCommands: Commands {
             Button("Télécharger la sélection") { model.browser?.downloadSelection() }
                 .keyboardShortcut("d")
                 .disabled(model.browser?.selectedFiles.isEmpty ?? true)
+            Button("Modifier le fichier") { model.browser?.editSelection() }
+                .keyboardShortcut("e")
+                .disabled(model.browser?.canEditSelection != true)
         }
     }
 }

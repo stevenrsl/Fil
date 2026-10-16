@@ -4,7 +4,9 @@ import SwiftUI
 /// Plateau des transferts : visible dans toutes les phases, jamais une page à part.
 struct TransfersTray: View {
     let queue: TransferQueue
+    let edits: EditCoordinator
     @State private var isExpanded = true
+    @State private var pendingDiscard: EditSession?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +21,7 @@ struct TransfersTray: View {
                 }
                 .buttonStyle(.plain)
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(queue.summary(now: context.date))
+                    Text(summary(now: context.date))
                         .font(TypeScale.label)
                         .foregroundStyle(Palette.inkSoft)
                 }
@@ -33,6 +35,9 @@ struct TransfersTray: View {
             if isExpanded {
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        ForEach(edits.sessions) { session in
+                            EditRow(session: session, edits: edits) { pendingDiscard = session }
+                        }
                         ForEach(ordered) { item in
                             TransferRow(item: item, queue: queue)
                         }
@@ -43,6 +48,22 @@ struct TransfersTray: View {
             }
         }
         .background(Palette.surface)
+        .confirmationDialog(
+            "Abandonner les modifications de « \(pendingDiscard?.name ?? "") » ?",
+            isPresented: Binding(get: { pendingDiscard != nil }, set: { if !$0 { pendingDiscard = nil } }),
+            presenting: pendingDiscard
+        ) { session in
+            Button("Abandonner", role: .destructive) { edits.discard(session.id) }
+        } message: { _ in
+            Text("Ce qui n'a pas été envoyé au serveur sera perdu.")
+        }
+    }
+
+    private func summary(now: Date) -> String {
+        var parts: [String] = []
+        if !queue.items.isEmpty { parts.append(queue.summary(now: now)) }
+        if !edits.sessions.isEmpty { parts.append(Format.plural(edits.sessions.count, "fichier en modification", "fichiers en modification")) }
+        return parts.joined(separator: " · ")
     }
 
     /// En cours d'abord, dans l'ordre de départ ; puis les terminés, du plus récent au plus ancien.
@@ -122,5 +143,80 @@ struct TransferRow: View {
         .buttonStyle(ToolButtonStyle())
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// Un fichier distant ouvert dans l'éditeur : ce qui s'est passé, et ce que l'utilisateur peut y faire.
+struct EditRow: View {
+    let session: EditSession
+    let edits: EditCoordinator
+    let askDiscard: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Spacing.regular) {
+            Image(systemName: session.needsAttention ? "pencil.circle.fill" : "pencil.circle")
+                .font(.system(size: 17))
+                .foregroundStyle(session.needsAttention ? Palette.alert : Palette.accentInk)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: Spacing.tight) {
+                    Text(session.name)
+                        .font(TypeScale.body)
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(session.connectionName)
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                        .lineLimit(1)
+                }
+                Text(session.phrase())
+                    .font(TypeScale.label)
+                    .foregroundStyle(session.needsAttention ? Palette.alert : Palette.inkSoft)
+                    .lineLimit(2)
+                if session.state == .downloading || session.state == .uploading {
+                    ThinProgress(fraction: fraction)
+                        .padding(.top, 2)
+                }
+            }
+            Spacer(minLength: Spacing.tight)
+            actions
+        }
+        .padding(.horizontal, Spacing.page).padding(.vertical, 8)
+    }
+
+    private var fraction: Double? {
+        guard session.state == .downloading, let total = session.totalBytes, total > 0 else { return nil }
+        return min(1, Double(session.downloadedBytes) / Double(total))
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: Spacing.regular) {
+            switch session.state {
+            case .downloading:
+                Button("Annuler") { edits.discard(session.id) }
+            case .editing:
+                Button("Rouvrir") { edits.reopen(session.id) }
+                Button("Terminer") { Task { await edits.finish(session.id) } }
+                    .help("Envoie un dernier enregistrement s'il y en a un, puis supprime la copie locale.")
+            case .uploading:
+                EmptyView()
+            case .conflict:
+                Button("Écraser") { edits.overwrite(session.id) }
+                    .help("Remplace la version du serveur par la tienne.")
+                reveal
+                Button("Abandonner…", action: askDiscard)
+            case .failed:
+                Button("Réessayer") { edits.retry(session.id) }
+                reveal
+                Button("Abandonner…", action: askDiscard)
+            }
+        }
+        .buttonStyle(QuietButtonStyle())
+    }
+
+    private var reveal: some View {
+        Button("Afficher") { NSWorkspace.shared.activateFileViewerSelecting([session.localURL]) }
+            .help("Montre ta copie dans le Finder.")
     }
 }

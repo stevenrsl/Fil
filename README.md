@@ -15,6 +15,8 @@ Client macOS de transferts distants, pensé pour être plus direct, calme et rap
 | kDrive | via WebDAV, pas encore éprouvé sur un vrai kDrive | URLSession |
 | Proton Drive | pas encore disponible | — |
 
+Un serveur SSH ou un certificat inconnu n'est jamais accepté en silence : Fil montre l'empreinte et attend ton accord. « Modifier » ouvre un fichier distant dans ton éditeur et renvoie chaque enregistrement, en s'arrêtant si le serveur a changé entre-temps.
+
 Aucune bibliothèque tierce n'est embarquée. Les mots de passe vont dans le Keychain, jamais dans les favoris ni dans les journaux. Aucun appel réseau de télémétrie.
 
 ## Construire

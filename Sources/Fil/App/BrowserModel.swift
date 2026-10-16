@@ -30,18 +30,20 @@ final class BrowserModel {
 
     @ObservationIgnored let provider: any RemoteFileProvider
     @ObservationIgnored private let transfers: TransferQueue
+    @ObservationIgnored private let edits: EditCoordinator
     @ObservationIgnored private let downloadFolder: @MainActor () -> URL
     /// Derniers listings vus, pour afficher tout de suite en revenant. Toujours relu derrière.
     @ObservationIgnored private var cache: [RemotePath: [RemoteFile]] = [:]
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
 
-    init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, downloadFolder: @escaping @MainActor () -> URL) {
+    init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, edits: EditCoordinator = EditCoordinator(), downloadFolder: @escaping @MainActor () -> URL) {
         self.connection = connection
         self.provider = provider
         self.home = home
         self.path = home
         self.transfers = transfers
+        self.edits = edits
         self.downloadFolder = downloadFolder
         load(home)
     }
@@ -141,6 +143,22 @@ final class BrowserModel {
     }
 
     // MARK: Actions
+
+    /// Un seul fichier est sélectionné, et c'est bien un fichier : on peut le modifier sur place.
+    var canEditSelection: Bool {
+        let chosen = selectedFiles
+        return chosen.count == 1 && chosen[0].kind == .file
+    }
+
+    func editSelection() {
+        guard canEditSelection else { return }
+        edit(selectedFiles[0])
+    }
+
+    /// Ouvre le fichier dans l'éditeur ; chaque enregistrement repart vers le serveur.
+    func edit(_ file: RemoteFile) {
+        notice = edits.start(file, via: provider)
+    }
 
     func downloadSelection() {
         download(selectedFiles)

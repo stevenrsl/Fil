@@ -234,7 +234,9 @@ final class SSHCommandTests: XCTestCase {
         let connection = RemoteConnection(host: "exemple.fr", port: 2222, protocol: .sftp, username: "moi")
         let arguments = SSHCommand.arguments(for: connection)
         XCTAssertEqual(Array(arguments.suffix(4)), ["-s", "--", "exemple.fr", "sftp"])
-        XCTAssertTrue(arguments.contains("StrictHostKeyChecking=accept-new"))
+        XCTAssertTrue(arguments.contains("StrictHostKeyChecking=yes"), "un serveur inconnu n'est jamais accepté en silence")
+        XCTAssertFalse(arguments.contains("StrictHostKeyChecking=accept-new"))
+        XCTAssertTrue(arguments.contains("UpdateHostKeys=no"), "ssh n'écrit rien dans les fichiers de l'utilisateur de son propre chef")
         XCTAssertEqual(arguments[arguments.firstIndex(of: "-p")! + 1], "2222")
         XCTAssertEqual(arguments[arguments.firstIndex(of: "-l")! + 1], "moi")
     }

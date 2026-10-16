@@ -191,6 +191,12 @@ enum TransferRunner {
         }
     }
 
+    /// Remplace un fichier distant, sous le nom exact donné, par le même chemin atomique que les envois :
+    /// nom temporaire, contrôle de taille, renommage. Sert à renvoyer un fichier modifié sur place.
+    static func replaceFile(_ source: URL, at destination: RemotePath, via provider: any RemoteFileProvider) async throws {
+        try await uploadFile(source, to: destination, via: provider, ledger: TransferLedger(), report: TransferReport { _ in }, base: 0)
+    }
+
     private static func uploadFile(_ source: URL, to destination: RemotePath, via provider: any RemoteFileProvider, ledger: TransferLedger, report: TransferReport, base: Int64) async throws {
         let key = destination.value
         let size = LocalFile.size(of: source) ?? 0

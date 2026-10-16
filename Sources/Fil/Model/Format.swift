@@ -39,6 +39,11 @@ public enum Format {
         return date.formatted(.dateTime.day().month(.abbreviated).year().locale(locale))
     }
 
+    /// « 14:32 ».
+    public static func time(_ date: Date) -> String {
+        date.formatted(.dateTime.hour().minute().locale(locale))
+    }
+
     /// Le français garde le singulier pour 0 et 1.
     public static func plural(_ value: Int, _ singular: String, _ plural: String) -> String {
         "\(count(value)) \(abs(value) <= 1 ? singular : plural)"

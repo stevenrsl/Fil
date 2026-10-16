@@ -5,6 +5,7 @@ import Foundation
 actor SFTPProvider: RemoteFileProvider {
     nonisolated let connection: RemoteConnection
     private let launch: SFTPChannel.Launch
+    private let extraOptions: [String]
     private var channel: SFTPChannel?
     private var opening: Task<SFTPChannel, Error>?
 
@@ -12,11 +13,12 @@ actor SFTPProvider: RemoteFileProvider {
     static let window = 64
 
     /// `extraOptions` : options `ssh` supplémentaires, réservées aux tests (clé, `known_hosts` temporaire).
-    init(connection: RemoteConnection, extraOptions: [String] = [], askpass: String = Askpass.helperPath, environment: [String: String] = ProcessInfo.processInfo.environment) {
+    init(connection: RemoteConnection, extraOptions: [String] = [], trustedHosts: URL? = FilKnownHosts.standard.url, askpass: String = Askpass.helperPath, environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.connection = connection
+        self.extraOptions = extraOptions
         self.launch = SFTPChannel.Launch(
             executable: SSHCommand.executable,
-            arguments: SSHCommand.arguments(for: connection, extraOptions: extraOptions),
+            arguments: SSHCommand.arguments(for: connection, extraOptions: extraOptions, trustedHosts: trustedHosts),
             environment: SSHCommand.environment(base: environment, askpass: askpass, connectionID: connection.id)
         )
     }
@@ -171,16 +173,23 @@ actor SFTPProvider: RemoteFileProvider {
         if let channel, channel.isAlive { return channel }
         if let opening { return try await opening.value }
         let launch = launch
+        let connection = connection
+        let extraOptions = extraOptions
         let host = connection.resolvedHost
         let port = connection.port
         let task = Task {
             let channel = SFTPChannel(launch: launch) { status, errorOutput in
                 SSHCommand.describeExit(status: status, errorOutput: errorOutput, host: host, port: port)
             }
-            _ = try await withTaskCancellationHandler {
-                try await channel.start()
-            } onCancel: {
-                channel.terminate()
+            do {
+                _ = try await withTaskCancellationHandler {
+                    try await channel.start()
+                } onCancel: {
+                    channel.terminate()
+                }
+            } catch ProviderError.hostKeyUnknown(let keys) where keys.isEmpty {
+                // Serveur jamais vu : on relève ses clés, sans s'authentifier, pour que l'utilisateur les vérifie.
+                throw ProviderError.hostKeyUnknown(try await HostKeyDiscovery.discover(connection: connection, extraOptions: extraOptions))
             }
             return channel
         }

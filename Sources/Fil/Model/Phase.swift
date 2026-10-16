@@ -6,18 +6,25 @@ public enum Phase: Equatable, Sendable {
     case choosing
     case connecting(RemoteConnection)
     case browsing(RemoteConnection)
+    /// Une première rencontre à vérifier : l'empreinte d'un serveur SSH, ou un certificat que macOS ne reconnaît pas.
+    case confirming(RemoteConnection, TrustRequest)
     /// La page de réglage, avec la raison de l'échec au-dessus du bouton.
     case failed(RemoteConnection, reason: String)
 
     public var connection: RemoteConnection? {
         switch self {
         case .choosing: nil
-        case .connecting(let connection), .browsing(let connection), .failed(let connection, _): connection
+        case .connecting(let connection), .browsing(let connection), .confirming(let connection, _), .failed(let connection, _): connection
         }
     }
 
     public var isConnecting: Bool {
         if case .connecting = self { return true }
+        return false
+    }
+
+    public var isConfirming: Bool {
+        if case .confirming = self { return true }
         return false
     }
 

@@ -45,17 +45,22 @@ actor MockProvider: RemoteFileProvider {
     var dropLastUploadedByte = false
     private(set) var running = 0
     private(set) var maxRunning = 0
+    /// Dates des fichiers : une horloge qui n'avance que quand on écrit, pour des tests sans attente.
+    private var mtimes: [RemotePath: Date] = [:]
+    private var tick = 0
 
-    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:], canResumeUploads: Bool = true) {
+    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:], canResumeUploads: Bool = true, connectError: Error? = nil) {
         self.connection = connection
         self.home = home
+        self.connectError = connectError
         self.canResumeUploads = canResumeUploads
         var tree: [RemotePath: [RemoteFile]] = [.root: []]
         var contents: [RemotePath: Data] = [:]
         for (rawPath, text) in files {
             let path = RemotePath(rawPath)
             contents[path] = Data(text.utf8)
-            Self.insert(RemoteFile(name: path.name, path: path, kind: .file, byteCount: Int64(text.utf8.count)), into: &tree)
+            Self.insert(RemoteFile(name: path.name, path: path, kind: .file, byteCount: Int64(text.utf8.count), modifiedAt: Date(timeIntervalSince1970: 1_800_000_000)), into: &tree)
+            mtimes[path] = Date(timeIntervalSince1970: 1_800_000_000)
         }
         self.tree = tree
         self.contents = contents
@@ -89,12 +94,18 @@ actor MockProvider: RemoteFileProvider {
     func put(_ rawPath: String, _ text: String) {
         let path = RemotePath(rawPath)
         contents[path] = Data(text.utf8)
+        touch(path)
         register(path)
+    }
+
+    private func touch(_ path: RemotePath) {
+        tick += 1
+        mtimes[path] = Date(timeIntervalSince1970: 1_800_000_000 + Double(tick))
     }
 
     private func register(_ path: RemotePath) {
         let size = Int64(contents[path]?.count ?? 0)
-        Self.insert(RemoteFile(name: path.name, path: path, kind: .file, byteCount: size), into: &tree)
+        Self.insert(RemoteFile(name: path.name, path: path, kind: .file, byteCount: size, modifiedAt: mtimes[path]), into: &tree)
     }
 
     func connect() async throws -> RemotePath {
@@ -167,8 +178,9 @@ actor MockProvider: RemoteFileProvider {
         if dropLastUploadedByte, var stored = contents[destination], !stored.isEmpty {
             stored.removeLast()
             contents[destination] = stored
-            register(destination)
         }
+        touch(destination)
+        register(destination)
     }
 
     func size(of path: RemotePath) async throws -> Int64? {
@@ -182,6 +194,7 @@ actor MockProvider: RemoteFileProvider {
         contents[destination] = data
         contents[source] = nil
         tree[source.parent ?? .root]?.removeAll { $0.path == source }
+        touch(destination)
         register(destination)
     }
 

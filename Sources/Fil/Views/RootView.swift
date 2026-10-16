@@ -11,8 +11,8 @@ struct RootView: View {
             VStack(spacing: 0) {
                 page
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                if !model.transfers.items.isEmpty {
-                    TransfersTray(queue: model.transfers)
+                if !model.transfers.items.isEmpty || !model.edits.sessions.isEmpty {
+                    TransfersTray(queue: model.transfers, edits: model.edits)
                 }
             }
             .background(Palette.ground)
@@ -27,6 +27,8 @@ struct RootView: View {
             ConnectionView(model: model)
         case .connecting(let connection):
             ConnectingView(connection: connection) { model.cancelConnecting() }
+        case .confirming(let connection, let request):
+            TrustView(connection: connection, request: request, accept: { model.confirmTrust() }, decline: { model.declineTrust() })
         case .browsing:
             if let browser = model.browser {
                 BrowserView(browser: browser, offer: ftpsOffer) { model.closeConnection() }

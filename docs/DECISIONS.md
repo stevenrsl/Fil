@@ -147,3 +147,35 @@
 **Décision.** `Tools/test-servers.sh` garde son état dans `$TMPDIR/fil-test-servers` et sait arrêter des serveurs dont le fichier PID a disparu.
 
 **Pourquoi.** `swift package clean` efface `.build/` sans arrêter les serveurs : ils restaient orphelins sur leurs ports.
+
+## 2026-10-13 · Serveur SSH inconnu : on montre l'empreinte, on ne l'accepte plus en silence
+
+**Décision.** `ssh` tourne en `StrictHostKeyChecking=yes` ([`SSHCommand.arguments`](../Sources/Fil/Transfer/SFTP/SSHCommand.swift)). Quand le serveur est inconnu, [`HostKeyDiscovery`](../Sources/Fil/Transfer/Trust/CertificateReader.swift) relève sa clé par une connexion d'essai vers un `known_hosts` jetable, avec `PreferredAuthentications=none` : aucun identifiant ne part. L'utilisateur voit l'empreinte sur une page à part ([`TrustView`](../Sources/Fil/Views/TrustView.swift), phase `Phase.confirming`) ; s'il accepte, la clé est écrite dans le fichier de Fil, puis la connexion se fait pour de bon, toujours en mode strict.
+
+**Pourquoi.** `accept-new` mémorisait la première clé vue sans rien demander : c'est exactement le moment où une usurpation passe. La connexion d'essai passe par `ssh` lui-même, donc alias, `ProxyJump`, port et `~/.ssh/config` sont respectés, et la clé relevée est celle qu'il présentera ensuite. La clé enregistrée est celle dont l'empreinte a été affichée, pas une seconde lecture.
+
+**Où vit la confiance.** Dans `~/Library/Application Support/Fil/known_hosts` ([`FilKnownHosts`](../Sources/Fil/Transfer/Trust/TrustStores.swift)), passé à `ssh` en `GlobalKnownHostsFile` : lu en plus de `~/.ssh/known_hosts`, jamais écrit par `ssh` (`UpdateHostKeys=no`). Fil n'écrit rien dans `~/.ssh`, et ce qu'il approuve s'efface en supprimant un fichier. Les serveurs déjà acceptés par l'ancien mode restent connus : leur clé est dans `~/.ssh/known_hosts`. Une clé qui **change** reste refusée, sans nouvelle question.
+
+## 2026-10-13 · Certificats non reconnus : relevés, vérifiés par l'utilisateur, puis épinglés
+
+**Décision.** Un certificat que macOS refuse n'est plus une impasse. FTPS : [`CertificateReader`](../Sources/Fil/Transfer/Trust/CertificateReader.swift) relève le certificat avec `URLSessionStreamTask.startSecureConnection()`, qui passe la connexion FTP en TLS sur place sans rien envoyer d'autre que `AUTH TLS`. WebDAV : le défi de confiance d'`URLSession` fournit le certificat. L'utilisateur voit nom, origine (auto-signé ou non), expiration et empreinte SHA-256 ; s'il accepte, le certificat est épinglé pour **cette connexion** ([`RemoteConnection.trustedCertificate`](../Sources/Fil/Model/Remote.swift), PEM dans `Application Support/Fil/certificates`). Fil ne se connecte alors qu'à ce certificat : FTPS le donne à libcurl comme unique autorité (`CURLOPT_CAINFO`, nom non vérifié), WebDAV compare son empreinte dans le défi. Un certificat différent est refusé avec « le certificat a changé » ([`ProviderError.certificateChanged`](../Sources/Fil/Transfer/RemoteFileProvider.swift)), sans nouvelle question.
+
+**Pourquoi.** Un NAS ou un serveur personnel n'aura jamais de certificat reconnu par macOS ; refuser sans issue poussait à renoncer au chiffrement. Épingler un certificat vérifié à l'œil est plus sûr que « ne rien vérifier » et plus honnête que « tout accepter ». Le serveur FTPS de l'utilisateur change de certificat ? Le refus est volontaire : « Oublier » (réglages de la connexion) redemande la vérification.
+
+**Garde-fous.** Changer l'adresse, le port ou le protocole d'une connexion oublie son certificat : la confiance ne suit pas un autre serveur. Le fichier PEM n'est supprimé que si plus aucune connexion ne l'utilise. Aucune case « faire confiance quand même » sans empreinte affichée.
+
+## 2026-10-13 · Piège Swift : `\r\n` n'est pas `\n`
+
+**Décision.** La fin d'une réponse FTP se détecte sur les octets ([`CertificateReader.isCompleteReply`](../Sources/Fil/Transfer/Trust/CertificateReader.swift)), pas avec `hasSuffix("\n")`.
+
+**Pourquoi.** Pour Swift, `\r\n` est un seul caractère : `"a\r\n".hasSuffix("\n")` est faux. La lecture attendait une fin qui ne venait pas et abandonnait au bout de dix secondes. Trouvé par le test d'intégration FTPS ; couvert par un test de non-régression.
+
+## 2026-10-13 · Modification sur place
+
+**Décision.** « Modifier » (menu contextuel, ⌘E) télécharge le fichier dans `~/Library/Caches/Fil/Edits`, l'ouvre dans l'éditeur, surveille la copie et renvoie chaque enregistrement ([`EditCoordinator`](../Sources/Fil/App/EditCoordinator.swift)). Un enregistrement se reconnaît à une date ou une taille qui change, **vue deux fois de suite** (l'éditeur n'est pas envoyé à mi-écriture), puis à un contenu qui change vraiment (condensé SHA-256) : un fichier simplement « touché » n'envoie rien. Chaque envoi passe par le chemin atomique des transferts ([`TransferRunner.replaceFile`](../Sources/Fil/Transfer/TransferRunner.swift)) sous le nom exact du serveur, sans le renormaliser.
+
+**Conflits.** Avant d'envoyer, Fil relit taille et date du fichier distant : si elles ne sont plus celles du téléchargement (ou si le fichier a disparu), rien n'est envoyé. L'utilisateur choisit « Écraser » ou « Abandonner ». La date posée par notre propre envoi devient la nouvelle référence : elle n'est pas un conflit.
+
+**Pertes évitées.** La copie locale n'est jamais supprimée tant qu'elle porte des changements non envoyés : « Terminer » envoie d'abord un dernier enregistrement et garde la copie en cas de conflit ou d'échec ; quitter Fil avec des changements en attente demande confirmation et laisse les copies une semaine. Un échec n'est pas rejoué en boucle : un nouvel enregistrement, ou « Réessayer », relance. Un fichier déjà ouvert se rouvre au lieu de se dupliquer, parce que deux copies se disputeraient le même fichier. Limite : 64 Mo.
+
+**Éditeur.** Réglable (Réglages › Modification). Sans choix, l'application que macOS associe au fichier, sauf si c'est un navigateur (un `.html` s'y afficherait au lieu de s'y modifier) : on prend alors l'éditeur de texte par défaut ([`EditorLauncher`](../Sources/Fil/App/EditorLauncher.swift)).
