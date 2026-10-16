@@ -95,6 +95,17 @@ struct FilCommands: Commands {
     let model: AppModel
 
     var body: some Commands {
+        // Lancé par `swift run`, Fil n'a pas d'Info.plist : la version vient d'`AppVersion`, pas du paquet.
+        CommandGroup(replacing: .appInfo) {
+            Button("À propos de Fil") {
+                NSApp.orderFrontStandardAboutPanel(options: [
+                    .applicationName: "Fil",
+                    .applicationVersion: AppVersion.current,
+                    .version: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "dev"
+                ])
+                NSApp.activate()
+            }
+        }
         CommandGroup(replacing: .newItem) {
             Button("Nouvelle connexion") { model.addConnection() }
                 .keyboardShortcut("n")
@@ -119,6 +130,17 @@ struct FilCommands: Commands {
             Button("Modifier le fichier") { model.browser?.editSelection() }
                 .keyboardShortcut("e")
                 .disabled(model.browser?.canEditSelection != true)
+            Button("Renommer…") { model.browser?.beginRenamingSelection() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(model.browser?.canRenameSelection != true)
+            let favorites = model.favoriteConnections.prefix(9)
+            if !favorites.isEmpty {
+                Divider()
+                ForEach(Array(favorites.enumerated()), id: \.element.id) { index, connection in
+                    Button(connection.name.isEmpty ? "Sans nom" : connection.name) { model.openFavorite(at: index) }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
+            }
         }
     }
 }

@@ -54,8 +54,10 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
     /// FTPS, WebDAV, kDrive : le certificat que l'utilisateur a approuvé pour ce serveur, faute de
     /// chaîne que macOS reconnaisse (NAS, serveur personnel). Fil ne se connecte alors qu'à lui.
     public var trustedCertificate: TrustedCertificate?
+    /// Épinglée en tête de la barre latérale, ouverte par ⌘1 à ⌘9.
+    public var isFavorite: Bool
 
-    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .sftp, username: String = "", path: String = "", ftpsOfferDismissed: Bool = false, trustedCertificate: TrustedCertificate? = nil) {
+    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .sftp, username: String = "", path: String = "", ftpsOfferDismissed: Bool = false, trustedCertificate: TrustedCertificate? = nil, isFavorite: Bool = false) {
         self.id = id
         self.name = name
         self.host = host
@@ -65,10 +67,11 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
         self.path = path
         self.ftpsOfferDismissed = ftpsOfferDismissed
         self.trustedCertificate = trustedCertificate
+        self.isFavorite = isFavorite
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, `protocol`, username, path, ftpsOfferDismissed, trustedCertificate
+        case id, name, host, port, `protocol`, username, path, ftpsOfferDismissed, trustedCertificate, isFavorite
     }
 
     public init(from decoder: Decoder) throws {
@@ -82,6 +85,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
         path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
         ftpsOfferDismissed = try container.decodeIfPresent(Bool.self, forKey: .ftpsOfferDismissed) ?? false
         trustedCertificate = try container.decodeIfPresent(TrustedCertificate.self, forKey: .trustedCertificate)
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
     }
 
     public static func defaultPort(for proto: RemoteProtocol) -> Int { proto.defaultPort }

@@ -179,3 +179,38 @@
 **Pertes évitées.** La copie locale n'est jamais supprimée tant qu'elle porte des changements non envoyés : « Terminer » envoie d'abord un dernier enregistrement et garde la copie en cas de conflit ou d'échec ; quitter Fil avec des changements en attente demande confirmation et laisse les copies une semaine. Un échec n'est pas rejoué en boucle : un nouvel enregistrement, ou « Réessayer », relance. Un fichier déjà ouvert se rouvre au lieu de se dupliquer, parce que deux copies se disputeraient le même fichier. Limite : 64 Mo.
 
 **Éditeur.** Réglable (Réglages › Modification). Sans choix, l'application que macOS associe au fichier, sauf si c'est un navigateur (un `.html` s'y afficherait au lieu de s'y modifier) : on prend alors l'éditeur de texte par défaut ([`EditorLauncher`](../Sources/Fil/App/EditorLauncher.swift)).
+
+## 2026-10-16 · Numéro de version : une seule source, dans le code
+
+**Décision.** La version vit dans [`AppVersion.current`](../Sources/Fil/Model/AppVersion.swift) (aujourd'hui `0.1.2`, format `majeure.mineure.correctif`). `Tools/bundle.sh` la recopie dans `CFBundleShortVersionString` du paquet et pose `CFBundleVersion` au nombre de commits. `Support/Info.plist` la répète ; un test ([`AppVersionTests`](../Tests/FilTests/AppVersionTests.swift)) échoue s'il ne la suit plus. La version s'affiche dans « À propos de Fil » et en pied des réglages.
+
+**Pourquoi.** `swift run Fil` n'a pas d'`Info.plist` : lire la version dans le paquet aurait donné une fenêtre « À propos » vide en développement. Une constante Swift marche dans les deux cas, et un seul endroit à changer évite qu'un testeur rapporte un bug contre un numéro faux.
+
+**Monter de version.** Changer `AppVersion.current` et `Support/Info.plist`, puis `swift test`.
+
+## 2026-10-16 · Favoris : des connexions épinglées
+
+**Décision.** Une connexion porte [`RemoteConnection.isFavorite`](../Sources/Fil/Model/Remote.swift). Les favoris forment la première section de la barre latérale, dans l'ordre de la liste ; les neuf premiers s'ouvrent avec ⌘1 à ⌘9 ([`AppModel.openFavorite`](../Sources/Fil/App/AppModel.swift)). Un favori à qui il manque un réglage s'affiche au lieu de se connecter. Le champ est absent des anciens favoris : il vaut `false` au décodage, sans changer `ConnectionStore.currentVersion`.
+
+**Pourquoi.** Toutes les connexions sont déjà enregistrées ; ce qui manquait, c'est de distinguer les deux ou trois serveurs de tous les jours des autres, et d'y aller sans souris.
+
+## 2026-10-16 · Renommer : le nom est vérifié avant, jamais écrasé
+
+**Décision.** « Renommer… » (menu contextuel, ⇧⌘R) passe par `move` ([`BrowserModel.rename`](../Sources/Fil/App/BrowserModel.swift)). Comme `move` remplace sa destination, Fil refuse d'abord un nom déjà présent dans le dossier affiché, un nom vide, un `/`, et un fichier (ou un dossier qui en contient un) ouvert dans l'éditeur. Entrée garde son rôle : ouvrir ou télécharger.
+
+**Pourquoi.** Dans le Finder, Entrée renomme ; dans Fil, à 3 h du matin, Entrée doit lancer le transfert. Un renommage ne doit jamais faire disparaître un voisin.
+
+## 2026-10-16 · Glisser vers le Finder : une promesse tenue par la file des transferts
+
+**Décision.** Chaque ligne du tableau fournit un `NSItemProvider` ([`BrowserModel.dragItem`](../Sources/Fil/App/DragOut.swift)) qui promet un fichier (ou un dossier) sans rien télécharger. Au dépôt, le téléchargement passe par [`TransferQueue.download(_:via:into:promise:)`](../Sources/Fil/Transfer/TransferQueue.swift) vers `~/Library/Caches/Fil/Drags/<uuid>`, puis le fichier est remis au destinataire, qui en fait sa copie. Annuler dans le plateau répond au Finder ; annuler dans le Finder annule le transfert. Un transfert promis ne se relance pas : personne ne l'attendrait plus. Les dossiers de dépôt de plus d'un jour sont effacés au lancement ; un fichier venant de ce cache et redéposé sur Fil n'est pas renvoyé au serveur.
+
+**Pourquoi.** `TableRow.itemProvider` garde le tableau SwiftUI et la sélection multiple, là où `NSFilePromiseProvider` demandait de repasser à `NSTableView`. Passer par la file donne gratuitement la progression, l'annulation et l'écriture atomique.
+
+
+## 2026-10-16 · Icône : une bobine de fil, dans la famille de Cairn
+
+**Décision.** L'icône est une bobine dont les deux joues sont des galets à l'encre (`#1C2636`) et dont le fil enroulé, puis le bout libre qui file vers la droite, portent la seule couleur, l'accent bleu (`#3866B3`). Le fond reprend le ciel dégradé et la colline de l'icône de Cairn, dans la palette de Fil ([`Palette`](../Sources/Fil/Design/Palette.swift)). Les sources sont dans `Support/Icon/` : `Fil.svg` (icône), `fil-mark.svg` (marque seule), `Fil-1024.png` et `Fil.icns`. `Tools/bundle.sh` copie `Fil.icns` dans le paquet ; `CFBundleIconFile` le désigne dans `Support/Info.plist`.
+
+**Pourquoi.** Un cairn n'a pas de sens pour un client de transferts. Une bobine, c'est le nom de l'app ; ses joues en galets la rendent parente de Cairn sans la copier. Formes plates, une seule couleur d'accent : lisible à 16 px.
+
+**Changer l'icône.** Modifier `Fil.svg`, puis regénérer : `qlmanage -t -s 1024` pour le PNG, `sips` vers un `.iconset`, puis `iconutil -c icns`.

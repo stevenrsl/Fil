@@ -53,6 +53,13 @@ struct SettingsView: View {
                 .font(TypeScale.label)
                 .foregroundStyle(Palette.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Text(AppVersion.display)
+                .font(TypeScale.caption)
+                .foregroundStyle(Palette.inkFaint)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, Spacing.tight)
         }
         .padding(Spacing.loose)
         .frame(width: 480)

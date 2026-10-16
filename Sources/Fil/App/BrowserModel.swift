@@ -24,12 +24,14 @@ final class BrowserModel {
     /// Dernière opération refusée, en clair.
     var notice: String?
     var selection: Set<RemoteFile.ID> = []
+    /// Élément dont on demande le nouveau nom ; la vue montre la saisie tant qu'il est là.
+    var renaming: RemoteFile?
     var filter = ""
     var sortKey: SortKey = .name
     var ascending = true
 
     @ObservationIgnored let provider: any RemoteFileProvider
-    @ObservationIgnored private let transfers: TransferQueue
+    @ObservationIgnored let transfers: TransferQueue
     @ObservationIgnored private let edits: EditCoordinator
     @ObservationIgnored private let downloadFolder: @MainActor () -> URL
     /// Derniers listings vus, pour afficher tout de suite en revenant. Toujours relu derrière.
@@ -203,12 +205,59 @@ final class BrowserModel {
 
     /// Raison pour laquelle ce nom de dossier ne convient pas, `nil` s'il convient.
     func folderNameProblem(_ name: String) -> String? {
+        nameProblem(name, emptyReason: "Donne un nom au dossier.")
+    }
+
+    /// Raison pour laquelle `file` ne peut pas prendre ce nom, `nil` s'il le peut (ou s'il le porte déjà).
+    func renameProblem(_ file: RemoteFile, to name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "Donne un nom au dossier." }
+        if trimmed == file.name { return nil }
+        if let session = edits.session(under: file.path, on: connection.id) {
+            return "« \(session.name) » est ouvert dans l'éditeur. Termine la modification avant de renommer."
+        }
+        // Un nom qui ne diffère que par la casse désigne le même fichier sur bien des serveurs : on l'autorise.
+        return nameProblem(trimmed, emptyReason: "Donne un nom.", ignoring: file)
+    }
+
+    private func nameProblem(_ name: String, emptyReason: String, ignoring current: RemoteFile? = nil) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return emptyReason }
         if trimmed.contains("/") { return "Le nom ne peut pas contenir de « / »." }
         if trimmed == "." || trimmed == ".." { return "Ce nom est réservé." }
-        if files.contains(where: { $0.name == trimmed }) { return "« \(trimmed) » existe déjà ici." }
+        // `move` remplace la destination : c'est ici, et nulle part ailleurs, qu'on évite d'écraser un voisin.
+        if files.contains(where: { $0.name == trimmed && $0.path != current?.path }) { return "« \(trimmed) » existe déjà ici." }
         return nil
+    }
+
+    var canRenameSelection: Bool { selectedFiles.count == 1 }
+
+    func beginRenamingSelection() {
+        guard canRenameSelection else { return }
+        renaming = selectedFiles[0]
+    }
+
+    func rename(_ file: RemoteFile, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != file.name else { return }
+        if let problem = renameProblem(file, to: trimmed) {
+            notice = problem
+            return
+        }
+        let target = (file.path.parent ?? .root).appending(trimmed)
+        activity = "Renommage de « \(file.name) »…"
+        notice = nil
+        Task {
+            do {
+                try await provider.move(file.path, to: target)
+                // Les listings gardés sous l'ancien chemin ne désignent plus rien.
+                cache = cache.filter { !$0.key.hasPrefix(file.path) }
+                selection = [target.value]
+            } catch {
+                notice = ReadableError.message(for: error)
+            }
+            activity = nil
+            refresh()
+        }
     }
 
     func createFolder(named name: String) {

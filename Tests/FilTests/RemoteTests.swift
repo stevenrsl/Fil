@@ -26,6 +26,7 @@ final class RemoteTests: XCTestCase {
         let decoded = try JSONDecoder().decode([RemoteConnection].self, from: Data(json.utf8))
         XCTAssertEqual(decoded.first?.path, "")
         XCTAssertEqual(decoded.first?.username, "moi")
+        XCTAssertEqual(decoded.first?.isFavorite, false)
     }
 
     func testPhaseExposesItsConnection() {

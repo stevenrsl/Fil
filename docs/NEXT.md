@@ -12,9 +12,12 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 - **Modification sur place : conflit sur un serveur à date grossière.** Un listing FTP sans `MLSD` donne la date à la minute ; deux écritures de même taille dans la même minute ne se distinguent pas.
 - **Modification sur place : `.html` dans TextEdit** s'affiche en texte riche. Choisir un vrai éditeur dans les réglages.
 - **Modification sur place : fichiers de plus de 64 Mo** refusés. Un éditeur n'en a pas l'usage, mais le seuil mérite d'être mesuré.
-- **Glisser depuis Fil vers le Finder** (`NSFilePromiseProvider`). Aujourd'hui : bouton « Télécharger », double-clic, menu contextuel ou ⌘D.
+- **Glisser vers le Finder : vérifier à la main.** Le chemin de la promesse est testé sans interface (`NSItemProvider.loadFileRepresentation`), mais le geste réel (une ligne, plusieurs lignes, un dossier, annulation depuis le Finder) n'a pas été essayé à l'écran. Déposer une ligne sur la propre liste de Fil la télécharge avant de la refuser : à éviter dès que SwiftUI permet de reconnaître un glisser interne.
 - **Dossiers liés.** Un lien symbolique vers un dossier n'est pas suivi pendant le téléchargement d'un dossier (protection contre les boucles). Proposer de le suivre avec une limite de profondeur.
-- **Renommer et déplacer dans l'interface** : les fournisseurs savent déjà renommer (`move`), il manque le geste (touche Entrée sur un nom, menu contextuel).
+- **Déplacer dans l'interface** (glisser une ligne sur un dossier). Le renommage existe (menu contextuel, ⇧⌘R) ; Entrée ouvre toujours, comme avant.
+- **Renommer pendant un transfert** : refusé si le fichier est ouvert dans l'éditeur, pas s'il est en cours de téléchargement ou d'envoi, qui échouera alors avec « n'existe pas ».
+- **Renommer un dossier en WebDAV** : `MOVE` part sans `/` final. Couvert par le faux fournisseur, pas encore contre un vrai serveur (kDrive, Nextcloud, serveur d'intégration).
+- **Renommer : course avec un autre client.** Fil vérifie le nom dans le listing affiché ; un fichier créé ailleurs sous ce nom entre-temps serait remplacé par `move`.
 
 ## Sécurité
 

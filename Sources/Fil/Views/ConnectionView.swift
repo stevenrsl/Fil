@@ -44,7 +44,17 @@ struct ConnectionView: View {
                 title: connection.name.isEmpty ? "Sans nom" : connection.name,
                 lede: connection.resolvedHost.isEmpty ? "Renseigne le serveur ; Fil s'occupe du reste." : connection.summary
             ) {
-                PageTrail(text: "Fil · Connexions")
+                HStack(alignment: .firstTextBaseline) {
+                    PageTrail(text: "Fil · Connexions")
+                    Spacer()
+                    Button {
+                        model.toggleFavorite(id)
+                    } label: {
+                        Label(connection.isFavorite ? "Favori" : "Ajouter aux favoris", systemImage: connection.isFavorite ? "star.fill" : "star")
+                    }
+                    .buttonStyle(QuietButtonStyle(tint: connection.isFavorite ? Palette.accentInk : Palette.inkSoft))
+                    .help(connection.isFavorite ? "Retirer des favoris." : "Épingle cette connexion en haut de la liste, avec un raccourci ⌘1 à ⌘9.")
+                }
             }
 
             Divider().overlay(Palette.hairline).padding(.top, 34)

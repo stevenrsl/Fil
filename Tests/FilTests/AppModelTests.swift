@@ -57,6 +57,59 @@ final class BrowserModelTests: XCTestCase {
         XCTAssertEqual(browser.selection, ["/Nouveau"])
     }
 
+    func testRenameMovesTheFileAndSelectsIt() async {
+        let provider = MockProvider(files: ["/rapport.pdf": "x", "/autre.pdf": "y"])
+        let browser = makeBrowser(provider)
+        await waitUntil("listing") { browser.status == .ready }
+        let file = browser.files.first { $0.name == "rapport.pdf" }!
+        XCTAssertNil(browser.renameProblem(file, to: "rapport.pdf"))
+        XCTAssertNil(browser.renameProblem(file, to: "Rapport.pdf"))
+        XCTAssertEqual(browser.renameProblem(file, to: " "), "Donne un nom.")
+        XCTAssertEqual(browser.renameProblem(file, to: "a/b"), "Le nom ne peut pas contenir de « / ».")
+        XCTAssertEqual(browser.renameProblem(file, to: "autre.pdf"), "« autre.pdf » existe déjà ici.")
+
+        browser.rename(file, to: " final.pdf ")
+        await waitUntil("renommé") { browser.files.contains { $0.name == "final.pdf" } }
+        XCTAssertFalse(browser.files.contains { $0.name == "rapport.pdf" })
+        XCTAssertEqual(browser.selection, ["/final.pdf"])
+        let content = await provider.contents[RemotePath("/final.pdf")]
+        XCTAssertEqual(content, Data("x".utf8))
+    }
+
+    func testRenameNeverOverwritesANeighbour() async {
+        let provider = MockProvider(files: ["/a.txt": "a", "/b.txt": "b"])
+        let browser = makeBrowser(provider)
+        await waitUntil("listing") { browser.status == .ready }
+        browser.rename(browser.files.first { $0.name == "a.txt" }!, to: "b.txt")
+        XCTAssertEqual(browser.notice, "« b.txt » existe déjà ici.")
+        let journal = await provider.journal
+        XCTAssertFalse(journal.contains { $0.hasPrefix("move") })
+        let content = await provider.contents[RemotePath("/b.txt")]
+        XCTAssertEqual(content, Data("b".utf8))
+    }
+
+    func testRenameFolderKeepsItsContent() async {
+        let provider = MockProvider(files: ["/site/www/index.html": "<p>"])
+        let browser = makeBrowser(provider, home: RemotePath("/site"))
+        await waitUntil("listing") { browser.status == .ready }
+        browser.rename(browser.files[0], to: "public")
+        await waitUntil("renommé") { browser.files.map(\.name) == ["public"] }
+        browser.navigate(to: RemotePath("/site/public"))
+        await waitUntil("contenu") { browser.files.map(\.name) == ["index.html"] }
+    }
+
+    func testRenameRefusedWhileTheFileIsOpenInTheEditor() async throws {
+        let provider = MockProvider(files: ["/notes.txt": "x"])
+        let cache = try makeTemporaryFolder()
+        let edits = EditCoordinator(cacheFolder: cache)
+        edits.opener = { _ in true }
+        let browser = BrowserModel(connection: provider.connection, provider: provider, home: .root, transfers: TransferQueue(), edits: edits) { cache }
+        await waitUntil("listing") { browser.status == .ready }
+        let file = browser.files[0]
+        browser.edit(file)
+        XCTAssertEqual(browser.renameProblem(file, to: "n.txt"), "« notes.txt » est ouvert dans l'éditeur. Termine la modification avant de renommer.")
+    }
+
     func testDeleteRemovesRecursively() async {
         let provider = MockProvider(files: ["/vieux/a/b.txt": "x", "/garde.txt": "y"])
         let browser = makeBrowser(provider)
@@ -251,6 +304,42 @@ final class AppModelTests: XCTestCase {
         await waitUntil("navigation") { model.phase.isBrowsing }
         let reopened = makeModel { connection, _ in MockProvider(connection: connection) }
         XCTAssertEqual(reopened.selectedConnectionID, second)
+    }
+
+    func testFavoritesArePinnedPersistedAndOpenedByIndex() async {
+        let model = makeModel { connection, _ in MockProvider(connection: connection) }
+        model.addConnection()
+        let first = model.selectedConnectionID!
+        model.updateConnection(first) { $0.name = "Archive"; $0.host = "archive.test" }
+        model.addConnection()
+        let second = model.selectedConnectionID!
+        model.updateConnection(second) { $0.name = "Site"; $0.host = "site.test" }
+
+        model.toggleFavorite(second)
+        XCTAssertEqual(model.favoriteConnections.map(\RemoteConnection.id), [second])
+        XCTAssertEqual(model.otherConnections.map(\RemoteConnection.id), [first])
+        XCTAssertEqual(ConnectionStore(defaults: defaults).load().connections.filter(\.isFavorite).map(\RemoteConnection.id), [second])
+
+        model.select(first)
+        model.openFavorite(at: 0)
+        XCTAssertEqual(model.selectedConnectionID, second)
+        await waitUntil("ouverte") { model.phase.isBrowsing }
+        XCTAssertEqual(model.activeConnectionID, second)
+        model.openFavorite(at: 3)
+        XCTAssertEqual(model.activeConnectionID, second)
+
+        model.toggleFavorite(second)
+        XCTAssertTrue(model.favoriteConnections.isEmpty)
+    }
+
+    func testFavoriteMissingASettingIsShownNotOpened() {
+        let model = makeModel { connection, _ in MockProvider(connection: connection) }
+        model.addConnection()
+        let id = model.selectedConnectionID!
+        model.toggleFavorite(id)
+        model.openFavorite(at: 0)
+        XCTAssertEqual(model.selectedConnectionID, id)
+        XCTAssertFalse(model.phase.isConnecting)
     }
 }
 

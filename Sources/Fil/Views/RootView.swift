@@ -57,12 +57,8 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.tight) {
-            Text("Connexions")
-                .font(TypeScale.label)
-                .foregroundStyle(Palette.inkFaint)
-                .padding(.horizontal, 10)
-                .padding(.bottom, Spacing.hair)
             if model.connections.isEmpty {
+                sectionTitle("Connexions")
                 Text("Aucune connexion")
                     .font(TypeScale.label)
                     .foregroundStyle(Palette.inkSoft)
@@ -70,8 +66,20 @@ struct SidebarView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(model.connections) { connection in
-                        row(connection)
+                    let favorites = model.favoriteConnections
+                    let others = model.otherConnections
+                    if !favorites.isEmpty {
+                        sectionTitle("Favoris")
+                        ForEach(Array(favorites.enumerated()), id: \.element.id) { index, connection in
+                            row(connection, shortcut: index < 9 ? index + 1 : nil)
+                        }
+                    }
+                    if !others.isEmpty {
+                        sectionTitle("Connexions")
+                            .padding(.top, favorites.isEmpty ? 0 : Spacing.regular)
+                        ForEach(others) { connection in
+                            row(connection)
+                        }
                     }
                 }
             }
@@ -100,7 +108,15 @@ struct SidebarView: View {
         }
     }
 
-    private func row(_ connection: RemoteConnection) -> some View {
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(TypeScale.label)
+            .foregroundStyle(Palette.inkFaint)
+            .padding(.horizontal, 10)
+            .padding(.bottom, Spacing.hair)
+    }
+
+    private func row(_ connection: RemoteConnection, shortcut: Int? = nil) -> some View {
         let isSelected = connection.id == model.selectedConnectionID
         let isActive = connection.id == model.activeConnectionID
         return Button {
@@ -120,6 +136,11 @@ struct SidebarView: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 0)
+                if let shortcut {
+                    Text("⌘\(shortcut)")
+                        .font(TypeScale.caption)
+                        .foregroundStyle(Palette.inkFaint)
+                }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(isSelected ? Palette.surface : .clear, in: RoundedRectangle(cornerRadius: Radius.medium))
@@ -137,6 +158,7 @@ struct SidebarView: View {
                 model.connect()
             }
             .disabled(!Readiness.connecting(connection).isReady)
+            Button(connection.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris") { model.toggleFavorite(connection.id) }
             Divider()
             Button("Supprimer la connexion…", role: .destructive) { pendingDeletion = connection }
         }

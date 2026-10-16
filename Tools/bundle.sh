@@ -23,6 +23,12 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Fil"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/Support/Icon/Fil.icns" "$APP/Contents/Resources/Fil.icns"
+# La version vient du code (Sources/Fil/Model/AppVersion.swift) ; le numéro de build, du nombre de commits.
+VERSION="$(sed -nE 's/.*static let current = "([^"]+)".*/\1/p' "$ROOT/Sources/Fil/Model/AppVersion.swift")"
+BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+[[ -n "$VERSION" ]] || { echo "Version introuvable dans AppVersion.swift" >&2; exit 1; }
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" "$APP/Contents/Info.plist"
 codesign --force --sign - --timestamp=none "$APP"
 
-echo "$APP"
+echo "$APP ($VERSION, build $BUILD)"

@@ -69,6 +69,7 @@ final class AppModel {
         self.selectedConnectionID = snapshot.connections.first { $0.id == snapshot.lastUsedID }?.id ?? snapshot.connections.first?.id
         self.savedPasswordIDs = Set(snapshot.connections.map(\.id).filter(secrets.hasPassword))
         edits.purgeStaleFolders()
+        DragCache.purgeStale()
         // Un enregistrement vient d'arriver sur le serveur : si c'est le dossier affiché, il se met à jour.
         edits.onRemoteChanged = { [weak self] connectionID, directory in
             guard let browser = self?.browser, browser.connection.id == connectionID, browser.path == directory else { return }
@@ -83,6 +84,10 @@ final class AppModel {
     }
 
     var readiness: Readiness { .connecting(selectedConnection) }
+
+    /// Connexions épinglées, dans l'ordre de la liste : la n-ième s'ouvre avec ⌘n.
+    var favoriteConnections: [RemoteConnection] { connections.filter(\.isFavorite) }
+    var otherConnections: [RemoteConnection] { connections.filter { !$0.isFavorite } }
 
     /// Faut-il montrer la proposition de passer en FTPS sur la page ouverte ?
     var hasFTPSOffer: Bool {
@@ -171,6 +176,20 @@ final class AppModel {
             if let address = RemoteAddress(parsing: connection.host) { connection.apply(address) }
             connection.host = connection.host.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
+
+    func toggleFavorite(_ id: UUID) {
+        updateConnection(id) { $0.isFavorite.toggle() }
+    }
+
+    /// ⌘1 à ⌘9 : ouvre le favori, ou l'affiche s'il lui manque un réglage. Déjà ouvert, rien ne bouge.
+    func openFavorite(at index: Int) {
+        let favorites = favoriteConnections
+        guard favorites.indices.contains(index) else { return }
+        let id = favorites[index].id
+        guard activeConnectionID != id else { return }
+        select(id)
+        if readiness.isReady { connect() }
     }
 
     func forgetPassword(_ id: UUID) {

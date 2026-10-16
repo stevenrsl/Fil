@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Fil</title>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#DCE8F8"/>
+      <stop offset="0.55" stop-color="#F3F6FB"/>
+    </linearGradient>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#sky)"/>
+    <!-- Colline -->
+    <path d="M 80 800 C 300 740, 724 740, 944 770 L 944 944 L 80 944 Z" fill="#D6DFEC"/>
+
+    <!-- Le bout libre du fil : il quitte la bobine et file vers la droite -->
+    <path d="M 600 640 C 680 660, 700 720, 780 740 C 840 755, 890 742, 940 724"
+          fill="none" stroke="#3866B3" stroke-width="18" stroke-linecap="round"/>
+  </g>
+
+  <!-- Le fil enroulé -->
+  <path d="M 392 470 C 470 462, 556 462, 632 470 L 640 690 C 556 698, 468 698, 384 690 Z" fill="#3866B3"/>
+  <g fill="none" stroke="#9DBDEB" stroke-width="7" stroke-linecap="round">
+    <path d="M 400 522 C 480 530, 546 530, 626 522"/>
+    <path d="M 398 578 C 480 586, 548 586, 628 578"/>
+    <path d="M 396 634 C 480 642, 548 642, 630 634"/>
+  </g>
+
+  <!-- Les deux joues de la bobine, galets comme ceux de Cairn -->
+  <path d="M 296 432 C 294 400, 380 384, 512 384 C 646 384, 730 400, 728 434 C 726 466, 690 474, 512 476 C 334 478, 298 466, 296 432 Z" fill="#1C2636"/>
+  <path d="M 300 728 C 298 694, 384 680, 512 680 C 644 680, 726 694, 724 728 C 722 760, 690 768, 512 770 C 334 772, 302 760, 300 728 Z" fill="#1C2636"/>
+</svg>

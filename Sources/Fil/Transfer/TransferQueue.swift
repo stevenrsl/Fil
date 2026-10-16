@@ -21,6 +21,11 @@ final class TransferQueue {
         /// Ce qui a déjà été écrit : c'est lui qui permet de reprendre après une coupure.
         let ledger = TransferLedger()
         let onFinish: (@MainActor () -> Void)?
+        /// Téléchargement promis à une autre application (glisser vers le Finder) : elle attend le
+        /// fichier final ou l'échec, une seule fois. Il n'est pas relancé : personne ne l'attendrait plus.
+        var promise: (@MainActor (Result<URL, Error>) -> Void)? = nil
+        /// Reste vrai une fois la promesse tenue.
+        var isPromised = false
     }
 
     init(maxConcurrent: Int = 2) {
@@ -47,19 +52,29 @@ final class TransferQueue {
 
     // MARK: Ajouter
 
-    func download(_ files: [RemoteFile], via provider: any RemoteFileProvider, into folder: URL) {
-        for file in files {
-            let item = TransferItem(
-                direction: .download,
-                name: file.name,
-                isFolder: file.isDirectory,
-                connectionName: provider.connection.name,
-                remotePath: file.path,
-                localURL: folder,
-                totalBytes: file.byteCount
-            )
-            enqueue(item, Job(provider: provider, source: .remote(file, folder: folder), onFinish: nil))
-        }
+    @discardableResult
+    func download(_ files: [RemoteFile], via provider: any RemoteFileProvider, into folder: URL) -> [UUID] {
+        files.map { enqueueDownload($0, via: provider, into: folder, promise: nil) }
+    }
+
+    /// Télécharge `file` dans `folder` et rend le chemin obtenu (ou l'échec) à `promise`.
+    @discardableResult
+    func download(_ file: RemoteFile, via provider: any RemoteFileProvider, into folder: URL, promise: @escaping @MainActor (Result<URL, Error>) -> Void) -> UUID {
+        enqueueDownload(file, via: provider, into: folder, promise: promise)
+    }
+
+    private func enqueueDownload(_ file: RemoteFile, via provider: any RemoteFileProvider, into folder: URL, promise: (@MainActor (Result<URL, Error>) -> Void)?) -> UUID {
+        let item = TransferItem(
+            direction: .download,
+            name: file.name,
+            isFolder: file.isDirectory,
+            connectionName: provider.connection.name,
+            remotePath: file.path,
+            localURL: folder,
+            totalBytes: file.byteCount
+        )
+        enqueue(item, Job(provider: provider, source: .remote(file, folder: folder), onFinish: nil, promise: promise, isPromised: promise != nil))
+        return item.id
     }
 
     func upload(_ urls: [URL], into directory: RemotePath, via provider: any RemoteFileProvider, onFinish: (@MainActor () -> Void)? = nil) {
@@ -88,6 +103,7 @@ final class TransferQueue {
             // Pas encore parti : rien à nettoyer, et il reste possible de le relancer.
             items[index].state = .cancelled
             items[index].finishedAt = .now
+            keepPromise(id, .cancelled)
         }
     }
 
@@ -97,7 +113,7 @@ final class TransferQueue {
 
     /// Relance un transfert interrompu. Il reprend où il s'était arrêté quand c'est sûr, sinon il recommence.
     func retry(_ id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }), !items[index].isActive, jobs[id] != nil else { return }
+        guard let index = items.firstIndex(where: { $0.id == id }), !items[index].isActive, let job = jobs[id], !job.isPromised else { return }
         items[index].state = .waiting
         items[index].transferredBytes = 0
         items[index].completedFiles = 0
@@ -113,7 +129,7 @@ final class TransferQueue {
     }
 
     func canRetry(_ id: UUID) -> Bool {
-        guard let item = items.first(where: { $0.id == id }), jobs[id] != nil else { return false }
+        guard let item = items.first(where: { $0.id == id }), let job = jobs[id], !job.isPromised else { return false }
         switch item.state {
         case .failed, .cancelled: return true
         default: return false
@@ -214,7 +230,26 @@ final class TransferQueue {
             }
         }
         if state == .done { jobs[id]?.onFinish?() }
+        keepPromise(id, state)
         pump()
+    }
+
+    /// Rend à l'application qui attend le fichier final, ou la raison de l'échec. Une seule fois.
+    private func keepPromise(_ id: UUID, _ state: TransferItem.State) {
+        guard let promise = jobs[id]?.promise else { return }
+        jobs[id]?.promise = nil
+        switch state {
+        case .done:
+            if let url = items.first(where: { $0.id == id })?.localURL {
+                promise(.success(url))
+            } else {
+                promise(.failure(ProviderError.connectionLost))
+            }
+        case .failed(let reason):
+            promise(.failure(ProviderError.server(reason)))
+        default:
+            promise(.failure(CancellationError()))
+        }
     }
 
     /// Efface les fichiers partiels d'un transfert qu'on ne reprendra pas.

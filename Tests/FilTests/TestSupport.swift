@@ -190,6 +190,19 @@ actor MockProvider: RemoteFileProvider {
     func move(_ source: RemotePath, to destination: RemotePath) async throws {
         journal.append("move \(source) -> \(destination)")
         if refuseMove { throw ProviderError.accessDenied(destination.name) }
+        if contents[source] == nil, tree[source] != nil {
+            // Dossier : on déplace tout le sous-arbre, comme RNTO, MOVE ou rename le font côté serveur.
+            let files = contents.filter { $0.key.hasPrefix(source) }
+            let folders = tree.keys.filter { $0.hasPrefix(source) }
+            let moved = { (path: RemotePath) in RemotePath(destination.value + path.value.dropFirst(source.value.count)) }
+            remove(source)
+            for folder in folders { Self.insert(RemoteFile(name: moved(folder).name, path: moved(folder), kind: .directory), into: &tree) }
+            for (path, data) in files {
+                contents[moved(path)] = data
+                register(moved(path))
+            }
+            return
+        }
         guard let data = contents[source] else { throw ProviderError.notFound(source.name) }
         contents[destination] = data
         contents[source] = nil

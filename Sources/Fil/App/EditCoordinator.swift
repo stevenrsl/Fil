@@ -81,6 +81,11 @@ final class EditCoordinator {
         }
     }
 
+    /// Fichier ouvert dans l'éditeur sous `path` (ou dans ce dossier) : le renommer couperait le lien.
+    func session(under path: RemotePath, on connectionID: UUID) -> EditSession? {
+        sessions.first { $0.connectionID == connectionID && $0.remotePath.hasPrefix(path) }
+    }
+
     // MARK: Ouvrir
 
     /// Ouvre `file` pour modification. Renvoie la raison d'un refus, `nil` si c'est parti.

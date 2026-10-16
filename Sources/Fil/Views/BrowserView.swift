@@ -23,6 +23,7 @@ struct BrowserView: View {
     @State private var pendingUpload: [URL] = []
     @State private var isNamingFolder = false
     @State private var folderName = ""
+    @State private var newName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -42,8 +43,9 @@ struct BrowserView: View {
         }
         .padding(.horizontal, Spacing.page).padding(.top, Spacing.page).padding(.bottom, 18)
         .dropDestination(for: URL.self) { urls, _ in
-            requestUpload(urls.filter(\.isFileURL))
-            return true
+            let local = urls.filter { $0.isFileURL && !DragCache.contains($0) }
+            requestUpload(local)
+            return !local.isEmpty
         } isTargeted: { isDropTargeted = $0 }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { requestUpload(urls) }
@@ -67,6 +69,19 @@ struct BrowserView: View {
             Button("Annuler", role: .cancel) {}
         } message: {
             Text(browser.folderNameProblem(folderName) ?? "Dans « \(browser.title) ».")
+        }
+        .alert(renamingTitle, isPresented: Binding(get: { browser.renaming != nil }, set: { if !$0 { browser.renaming = nil } })) {
+            TextField("Nouveau nom", text: $newName)
+            Button("Renommer") {
+                if let file = browser.renaming { browser.rename(file, to: newName) }
+            }
+            .disabled(browser.renaming.map { browser.renameProblem($0, to: newName) != nil } ?? true)
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text(browser.renaming.flatMap { browser.renameProblem($0, to: newName) } ?? "Dans « \(browser.title) ».")
+        }
+        .onChange(of: browser.renaming) { _, file in
+            if let file { newName = file.name }
         }
         .onChange(of: sortOrder) { _, order in
             guard let first = order.first else { return }
@@ -180,7 +195,7 @@ struct BrowserView: View {
     }
 
     private var table: some View {
-        Table(browser.visibleFiles, selection: $browser.selection, sortOrder: $sortOrder) {
+        Table(of: RemoteFile.self, selection: $browser.selection, sortOrder: $sortOrder) {
             TableColumn("Nom", value: \.name) { file in
                 HStack(spacing: Spacing.tight) {
                     Image(systemName: icon(for: file))
@@ -205,6 +220,11 @@ struct BrowserView: View {
                     .foregroundStyle(Palette.inkFaint)
             }
             .width(min: 110, ideal: 150, max: 200)
+        } rows: {
+            ForEach(browser.visibleFiles) { file in
+                // Glisser une ligne vers le Finder la télécharge là où elle est déposée.
+                TableRow(file).itemProvider { browser.dragItem(for: file) }
+            }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
         .scrollContentBackground(.hidden)
@@ -218,6 +238,9 @@ struct BrowserView: View {
             }
             Button(chosen.count > 1 ? "Télécharger \(Format.items(chosen.count))" : "Télécharger") { browser.download(chosen) }
                 .disabled(chosen.isEmpty)
+            if chosen.count == 1, let only = chosen.first {
+                Button("Renommer…") { browser.renaming = only }
+            }
             Button("Copier le chemin") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(chosen.map(\.path.value).joined(separator: "\n"), forType: .string)
@@ -282,6 +305,10 @@ struct BrowserView: View {
 
     private var deletionTitle: String {
         pendingDeletion.count == 1 ? "Supprimer « \(pendingDeletion[0].name) » ?" : "Supprimer \(Format.items(pendingDeletion.count)) ?"
+    }
+
+    private var renamingTitle: String {
+        browser.renaming.map { "Renommer « \($0.name) »" } ?? "Renommer"
     }
 
     private var uploadTitle: String {
