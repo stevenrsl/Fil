@@ -310,7 +310,8 @@ final class IntegrationTests: XCTestCase {
 
     /// Le vrai montage NetFS : écrit par le volume, relu par le fournisseur, puis démonté.
     func testWebDAVMountsInFinderAndReusesTheVolume() async throws {
-        let root = try XCTUnwrap(URL(string: try value("FIL_IT_WEBDAV_URL") + "/"))
+        let address = try value("FIL_IT_WEBDAV_URL")
+        let root = try XCTUnwrap(URL(string: address + "/"))
         let user = try value("FIL_IT_USER")
         let volumes = NetFSVolumes()
         do {

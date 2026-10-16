@@ -194,6 +194,9 @@ final class BrowserModel {
     /// WebDAV et kDrive seulement : le Finder monterait les autres en lecture seule, ou pas du tout.
     var canOpenInFinder: Bool { finder != nil && FinderMount.isSupported(connection.protocol) }
 
+    /// Au-delà, la phrase d'attente dit que le serveur traîne. Le montage, lui, continue.
+    @ObservationIgnored var finderPatience: Duration = .seconds(10)
+
     /// Monte la connexion comme volume (ou reprend celui qui l'est déjà) et y ouvre le dossier affiché.
     func openInFinder() {
         guard let finder, canOpenInFinder, activity == nil else { return }
@@ -206,9 +209,17 @@ final class BrowserModel {
             url = found
         }
         let shown = path
-        activity = "Montage de « \(connection.name) » dans le Finder…"
+        let mounting = "Montage de « \(connection.name) » dans le Finder…"
+        activity = mounting
         notice = nil
+        let patience = finderPatience
+        let slow = Task { [weak self] in
+            try? await Task.sleep(for: patience)
+            guard !Task.isCancelled, let self, self.activity == mounting else { return }
+            self.activity = "« \(self.connection.resolvedHost) » met du temps à répondre. Le montage continue…"
+        }
         Task {
+            defer { slow.cancel() }
             do {
                 let user = connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
                 let mountPoint = try await finder.volumes.mount(url, user: user, password: finder.password)

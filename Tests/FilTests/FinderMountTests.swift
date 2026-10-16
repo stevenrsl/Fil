@@ -7,6 +7,8 @@ final class FakeFinderVolumes: FinderVolumes, @unchecked Sendable {
     private var _mounts: [(url: URL, user: String, password: String)] = []
     private var _revealed: [URL] = []
     var failure: Error?
+    /// Pause avant de répondre, pour un serveur lent.
+    var delay: Duration = .zero
     let mountPoint = URL(fileURLWithPath: "/Volumes/dav", isDirectory: true)
 
     var mounts: [(url: URL, user: String, password: String)] { lock.withLock { _mounts } }
@@ -14,6 +16,7 @@ final class FakeFinderVolumes: FinderVolumes, @unchecked Sendable {
 
     func mount(_ url: URL, user: String, password: String) async throws -> URL {
         lock.withLock { _mounts.append((url, user, password)) }
+        try await Task.sleep(for: delay)
         if let failure { throw failure }
         return mountPoint
     }
@@ -91,6 +94,18 @@ final class BrowserFinderTests: XCTestCase {
         XCTAssertEqual(browser.notice, "« dav.test » ne répond pas. Le Finder n'a pas pu le monter.")
         XCTAssertNil(browser.activity)
         XCTAssertTrue(volumes.revealed.isEmpty)
+    }
+
+    func testSlowMountSaysTheServerIsTakingTimeThenStillReveals() async {
+        let volumes = FakeFinderVolumes()
+        volumes.delay = .milliseconds(300)
+        let browser = makeBrowser(RemoteConnection(name: "kDrive", host: "123", protocol: .kdrive), volumes: volumes)
+        browser.finderPatience = .milliseconds(50)
+        browser.openInFinder()
+        await waitUntil("phrase de lenteur") { browser.activity?.contains("met du temps") == true }
+        XCTAssertEqual(browser.waitingPhrase, "« 123.connect.kdrive.infomaniak.com » met du temps à répondre. Le montage continue…")
+        await waitUntil("révélé") { !volumes.revealed.isEmpty }
+        await waitUntil("libéré") { browser.activity == nil }
     }
 
     func testUnavailableWithoutAccessOrForOtherProtocols() {
