@@ -143,6 +143,11 @@ struct BrowserView: View {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button { isImporting = true } label: { Label("Envoyer…", systemImage: "square.and.arrow.up") }
                 .keyboardShortcut("u")
+            if browser.canOpenInFinder {
+                Button { browser.openInFinder() } label: { Label("Ouvrir dans le Finder", systemImage: "externaldrive.connected.to.line.below") }
+                    .disabled(browser.activity != nil)
+                    .help("Monte la connexion comme un disque. Le Finder laisse des fichiers ._ et .DS_Store sur le serveur.")
+            }
             Spacer(minLength: Spacing.regular)
             TextField("Filtrer", text: $browser.filter)
                 .textFieldStyle(FieldStyle())

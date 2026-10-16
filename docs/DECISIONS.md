@@ -214,3 +214,11 @@
 **Pourquoi.** Un cairn n'a pas de sens pour un client de transferts. Une bobine, c'est le nom de l'app ; ses joues en galets la rendent parente de Cairn sans la copier. Formes plates, une seule couleur d'accent : lisible à 16 px.
 
 **Changer l'icône.** Modifier `Fil.svg`, puis regénérer : `qlmanage -t -s 1024` pour le PNG, `sips` vers un `.iconset`, puis `iconutil -c icns`.
+
+## 2026-10-16 · Ouvrir dans le Finder : NetFS, pour WebDAV et kDrive seulement
+
+**Décision.** Une connexion WebDAV ou kDrive ouverte peut être montée comme volume (« Ouvrir dans le Finder », ⇧⌘O, bouton discret de la barre d'outils). [`NetFSVolumes`](../Sources/Fil/Transfer/FinderVolumes.swift) appelle `NetFSMountURLAsync` sans fenêtre système, avec l'identifiant et le mot de passe de la session (jamais dans l'URL), reprend un volume déjà monté depuis la même adresse, puis ouvre le dossier affiché dans Fil. [`FinderMount.target(for:)`](../Sources/Fil/Transfer/FinderVolumes.swift) refuse, avec une raison, un serveur dont le certificat n'est approuvé que dans Fil : le Finder ne connaît pas cette approbation. Le monteur est derrière le protocole `FinderVolumes`, simulé dans les tests ; un test d'intégration monte le vrai WebDAV local.
+
+**Pourquoi.** macOS monte WebDAV en écriture sans extension ni signature, mais FTP en lecture seule et ni FTPS ni SFTP. Proposer un volume FTP en lecture seule sèmerait la confusion. L'exploration complète est dans [`docs/FINDER.md`](FINDER.md) ; FTP, FTPS et SFTP attendent un File Provider.
+
+**Limites connues.** Le Finder écrit des `._*` et `.DS_Store` sur le serveur (dit dans l'aide du bouton). Une fois monté, le volume vit sans Fil : fermer la connexion ne le démonte pas, et un serveur qui tombe gèle le Finder, pas Fil.

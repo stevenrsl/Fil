@@ -38,6 +38,7 @@ final class AppModel {
     @ObservationIgnored private let knownHosts: FilKnownHosts
     @ObservationIgnored private let certificates: PinnedCertificates
     @ObservationIgnored private let probeFTPS: (RemoteConnection, String) async -> FTPSProbe.Result
+    @ObservationIgnored private let volumes: any FinderVolumes
     @ObservationIgnored private var connectTask: Task<Void, Never>?
     @ObservationIgnored private var probeTask: Task<Void, Never>?
 
@@ -50,8 +51,10 @@ final class AppModel {
         makeProvider: @escaping (RemoteConnection, String) -> any RemoteFileProvider = ProviderFactory.make,
         knownHosts: FilKnownHosts = .standard,
         certificates: PinnedCertificates = .standard,
-        probeFTPS: @escaping (RemoteConnection, String) async -> FTPSProbe.Result = { await FTPSProbe.check($0, password: $1) }
+        probeFTPS: @escaping (RemoteConnection, String) async -> FTPSProbe.Result = { await FTPSProbe.check($0, password: $1) },
+        volumes: any FinderVolumes = NetFSVolumes()
     ) {
+        self.volumes = volumes
         self.store = store
         self.preferences = preferences
         self.secrets = secrets
@@ -225,7 +228,8 @@ final class AppModel {
             do {
                 let home = try await provider.connect()
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
-                self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers, edits: self.edits) { [weak self] in
+                let finder = FinderMount.isSupported(connection.protocol) ? FinderAccess(volumes: self.volumes, password: password) : nil
+                self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers, edits: self.edits, finder: finder) { [weak self] in
                     self?.downloadFolder ?? Preferences().downloadFolder
                 }
                 self.phase = .browsing(connection)

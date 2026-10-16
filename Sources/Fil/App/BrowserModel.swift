@@ -34,13 +34,15 @@ final class BrowserModel {
     @ObservationIgnored let transfers: TransferQueue
     @ObservationIgnored private let edits: EditCoordinator
     @ObservationIgnored private let downloadFolder: @MainActor () -> URL
+    @ObservationIgnored private let finder: FinderAccess?
     /// Derniers listings vus, pour afficher tout de suite en revenant. Toujours relu derrière.
     @ObservationIgnored private var cache: [RemotePath: [RemoteFile]] = [:]
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
 
-    init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, edits: EditCoordinator = EditCoordinator(), downloadFolder: @escaping @MainActor () -> URL) {
+    init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, edits: EditCoordinator = EditCoordinator(), finder: FinderAccess? = nil, downloadFolder: @escaping @MainActor () -> URL) {
         self.connection = connection
+        self.finder = finder
         self.provider = provider
         self.home = home
         self.path = home
@@ -184,6 +186,37 @@ final class BrowserModel {
             guard let self else { return }
             self.cache[directory] = nil
             if self.path == directory { self.refresh() }
+        }
+    }
+
+    // MARK: Finder
+
+    /// WebDAV et kDrive seulement : le Finder monterait les autres en lecture seule, ou pas du tout.
+    var canOpenInFinder: Bool { finder != nil && FinderMount.isSupported(connection.protocol) }
+
+    /// Monte la connexion comme volume (ou reprend celui qui l'est déjà) et y ouvre le dossier affiché.
+    func openInFinder() {
+        guard let finder, canOpenInFinder, activity == nil else { return }
+        let url: URL
+        switch FinderMount.target(for: connection) {
+        case .blocked(let reason):
+            notice = reason
+            return
+        case .url(let found):
+            url = found
+        }
+        let shown = path
+        activity = "Montage de « \(connection.name) » dans le Finder…"
+        notice = nil
+        Task {
+            do {
+                let user = connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
+                let mountPoint = try await finder.volumes.mount(url, user: user, password: finder.password)
+                finder.volumes.reveal(FinderMount.folder(for: shown, in: mountPoint))
+            } catch {
+                notice = ReadableError.message(for: error)
+            }
+            activity = nil
         }
     }
 

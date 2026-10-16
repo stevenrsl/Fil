@@ -28,7 +28,8 @@ open .build/Fil.app
 9. **Première connexion à un serveur SFTP** : une page montre l'empreinte du serveur. Compare-la avec celle que ton hébergeur t'a donnée, puis « Faire confiance et se connecter ». Aux connexions suivantes, rien n'est redemandé ; si l'empreinte change, Fil refuse.
 10. **Serveur avec un certificat auto-signé** (NAS, serveur personnel, en FTPS ou WebDAV) : la même page montre le certificat. Une fois approuvé, il apparaît dans les réglages de la connexion, avec « Oublier ».
 11. **Modifier un fichier** : clic droit › « Modifier » (ou ⌘E). Le fichier s'ouvre dans ton éditeur ; chaque enregistrement part au serveur, et le plateau dit ce qui se passe. Essaie de modifier le même fichier depuis un autre endroit pendant ce temps : Fil doit s'arrêter et te laisser choisir, sans rien écraser. « Terminer » ferme la session une fois tout envoyé. Réglages › Modification choisit l'éditeur.
-12. **Provoquer des erreurs** : mauvais mot de passe, mauvais port, serveur éteint, câble débranché pendant un envoi. Chaque échec doit dire pourquoi en une phrase.
+12. **Ouvrir dans le Finder** (WebDAV et kDrive, ⇧⌘O) : la connexion apparaît comme un disque et le Finder s'ouvre sur le dossier affiché dans Fil. Essaie d'y copier un fichier, puis actualise Fil (⌘R) : il doit apparaître. Recommence ⇧⌘O : le même disque doit servir, pas un second.
+13. **Provoquer des erreurs** : mauvais mot de passe, mauvais port, serveur éteint, câble débranché pendant un envoi. Chaque échec doit dire pourquoi en une phrase.
 
 ## Particularités par protocole
 

@@ -130,6 +130,9 @@ struct FilCommands: Commands {
             Button("Modifier le fichier") { model.browser?.editSelection() }
                 .keyboardShortcut("e")
                 .disabled(model.browser?.canEditSelection != true)
+            Button("Ouvrir dans le Finder") { model.browser?.openInFinder() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(model.browser?.canOpenInFinder != true)
             Button("Renommer…") { model.browser?.beginRenamingSelection() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(model.browser?.canRenameSelection != true)

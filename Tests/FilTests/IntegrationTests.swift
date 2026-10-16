@@ -308,6 +308,35 @@ final class IntegrationTests: XCTestCase {
         return WebDAVProvider(connection: connection, password: try password ?? value("FIL_IT_PASSWORD"), root: try XCTUnwrap(URL(string: root)))
     }
 
+    /// Le vrai montage NetFS : écrit par le volume, relu par le fournisseur, puis démonté.
+    func testWebDAVMountsInFinderAndReusesTheVolume() async throws {
+        let root = try XCTUnwrap(URL(string: try value("FIL_IT_WEBDAV_URL") + "/"))
+        let user = try value("FIL_IT_USER")
+        let volumes = NetFSVolumes()
+        do {
+            _ = try await volumes.mount(root, user: user, password: "faux")
+            XCTFail("Le mauvais mot de passe doit être refusé")
+        } catch {
+            XCTAssertTrue(error is FinderMountError, "\(error)")
+        }
+        let mountPoint = try await volumes.mount(root, user: user, password: try value("FIL_IT_PASSWORD"))
+        let name = "finder-\(UUID().uuidString).txt"
+        try Data("monté".utf8).write(to: mountPoint.appendingPathComponent(name))
+        let again = try await volumes.mount(root, user: user, password: try value("FIL_IT_PASSWORD"))
+        try await FileManager.default.unmountVolume(at: mountPoint, options: [.withoutUI])
+        XCTAssertEqual(again.standardizedFileURL, mountPoint.standardizedFileURL)
+
+        let provider = try webDAVProvider()
+        let listed = try await provider.list(.root)
+        let file = try XCTUnwrap(listed.first { $0.name == name })
+        XCTAssertEqual(file.byteCount, Int64("monté".utf8.count))
+        try await provider.delete(file)
+        // Le Finder laisse un fichier AppleDouble à côté ; on le retire pour ne rien laisser derrière.
+        if let appleDouble = try await provider.list(.root).first(where: { $0.name == "._" + name }) {
+            try await provider.delete(appleDouble)
+        }
+    }
+
     func testWebDAVRoundTrip() async throws {
         try await roundTrip(try webDAVProvider())
     }
