@@ -4,8 +4,8 @@ import Foundation
 /// et un test vérifie que `Support/Info.plist` la suit.
 public enum AppVersion {
     /// Version marketing (`CFBundleShortVersionString`), au format `majeure.mineure.correctif`.
-    public static let current = "0.1.2"
+    public static let current = "0.1.3"
 
-    /// « Fil 0.1.2 ».
+    /// « Fil 0.1.3 ».
     public static var display: String { "Fil \(current)" }
 }
