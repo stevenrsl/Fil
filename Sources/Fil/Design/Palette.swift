@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 enum Palette {
@@ -19,9 +23,16 @@ enum Palette {
     static let caution = adaptive(light: (0.55, 0.42, 0.16), dark: (0.90, 0.76, 0.45))
 
     private static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
+        #if os(macOS)
         Color(nsColor: NSColor(name: nil) { appearance in
             let values = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
             return NSColor(calibratedRed: values.0, green: values.1, blue: values.2, alpha: 1)
         })
+        #else
+        Color(uiColor: UIColor { traits in
+            let values = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
+        })
+        #endif
     }
 }

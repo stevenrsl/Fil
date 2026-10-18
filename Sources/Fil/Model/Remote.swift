@@ -19,12 +19,25 @@ public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiabl
     /// Raison lisible quand le protocole n'est pas encore branché, `nil` sinon.
     public var unavailableReason: String? {
         switch self {
-        case .protonDrive: "Proton Drive passera par le CLI officiel de Proton. Cette intégration n'est pas encore branchée."
-        default: nil
+        case .protonDrive: return "Proton Drive passera par le CLI officiel de Proton. Cette intégration n'est pas encore branchée."
+        #if os(iOS)
+        // FTP passe par la libcurl de macOS et SFTP par /usr/bin/ssh : ni l'une ni l'autre n'existe sur iOS.
+        case .ftp, .ftps, .sftp: return "\(label) n'est pas encore disponible sur iPhone et iPad. Sur iOS, Fil commence par WebDAV et kDrive."
+        #endif
+        default: return nil
         }
     }
 
     public var isAvailable: Bool { unavailableReason == nil }
+
+    /// Protocole d'une nouvelle connexion : le plus courant parmi ceux que l'appareil sait parler.
+    public static var preferred: RemoteProtocol {
+        #if os(iOS)
+        return .webdav
+        #else
+        return .sftp
+        #endif
+    }
 
     /// Les WebDAV passent l'adresse à la racine WebDAV ; les autres partent du dossier personnel.
     public var pathIsRoot: Bool { self == .webdav || self == .kdrive }
@@ -57,7 +70,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
     /// Épinglée en tête de la barre latérale, ouverte par ⌘1 à ⌘9.
     public var isFavorite: Bool
 
-    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .sftp, username: String = "", path: String = "", ftpsOfferDismissed: Bool = false, trustedCertificate: TrustedCertificate? = nil, isFavorite: Bool = false) {
+    public init(id: UUID = UUID(), name: String = "Nouvelle connexion", host: String = "", port: Int? = nil, protocol: RemoteProtocol = .preferred, username: String = "", path: String = "", ftpsOfferDismissed: Bool = false, trustedCertificate: TrustedCertificate? = nil, isFavorite: Bool = false) {
         self.id = id
         self.name = name
         self.host = host

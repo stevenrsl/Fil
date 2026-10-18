@@ -51,7 +51,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     /// Première rencontre avec ce serveur SSH. Vide : le fournisseur n'a pas encore relevé ses clés.
     case hostKeyUnknown([HostKey])
     case certificateUntrusted
-    /// Certificat non reconnu par macOS, relevé pour que l'utilisateur le vérifie avant de l'approuver.
+    /// Certificat non reconnu par le système, relevé pour que l'utilisateur le vérifie avant de l'approuver.
     case certificateToConfirm(CertificateInfo)
     /// Un certificat approuvé autrefois n'est plus celui que présente le serveur.
     case certificateChanged(host: String)
@@ -90,9 +90,9 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
         case .hostKeyUnknown:
             "Fil ne connaît pas encore ce serveur. Vérifie son empreinte avant de lui faire confiance."
         case .certificateUntrusted:
-            "Le certificat du serveur n'est pas reconnu par macOS. Fil refuse de s'y connecter pour protéger ton mot de passe."
+            "Le certificat du serveur n'est pas reconnu par \(Platform.system). Fil refuse de s'y connecter pour protéger ton mot de passe."
         case .certificateToConfirm:
-            "Le certificat du serveur n'est pas reconnu par macOS. Vérifie son empreinte avant de lui faire confiance."
+            "Le certificat du serveur n'est pas reconnu par \(Platform.system). Vérifie son empreinte avant de lui faire confiance."
         case .certificateChanged(let host):
             "Le certificat de « \(host) » a changé depuis que tu lui as fait confiance. Si tu n'as rien modifié sur le serveur, ne continue pas : quelqu'un se fait peut-être passer pour lui."
         case .tlsUnavailable:
@@ -122,7 +122,7 @@ enum ReadableError {
         let ns = error as NSError
         if ns.domain == NSCocoaErrorDomain {
             switch ns.code {
-            case NSFileWriteOutOfSpaceError: return "Il n'y a plus assez d'espace sur ce Mac."
+            case NSFileWriteOutOfSpaceError: return "Il n'y a plus assez d'espace sur \(Platform.device)."
             case NSFileWriteNoPermissionError: return "Fil n'a pas le droit d'écrire à cet endroit."
             case NSFileReadNoPermissionError: return "Fil n'a pas le droit de lire ce fichier."
             case NSFileNoSuchFileError, NSFileReadNoSuchFileError: return "Le fichier local a disparu."
@@ -139,10 +139,10 @@ enum ReadableError {
         case .cannotFindHost, .dnsLookupFailed: "Le serveur est introuvable. Vérifie l'adresse et la connexion à Internet."
         case .cannotConnectToHost: "Le serveur refuse la connexion. Vérifie le port et le protocole."
         case .timedOut: "Le serveur ne répond pas. Il est peut-être éteint, ou un pare-feu bloque l'accès."
-        case .notConnectedToInternet: "Ce Mac n'est pas connecté à Internet."
+        case .notConnectedToInternet: "\(Platform.deviceCapitalized) n'est pas connecté à Internet."
         case .networkConnectionLost: "La connexion au serveur s'est interrompue."
         case .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .secureConnectionFailed:
-            "Le certificat du serveur n'est pas reconnu par macOS. Fil refuse de s'y connecter pour protéger ton mot de passe."
+            "Le certificat du serveur n'est pas reconnu par \(Platform.system). Fil refuse de s'y connecter pour protéger ton mot de passe."
         case .userAuthenticationRequired, .userCancelledAuthentication: "Identifiant ou mot de passe refusé par le serveur."
         default: "Erreur réseau (\(error.code.rawValue))."
         }

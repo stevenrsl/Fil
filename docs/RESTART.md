@@ -24,6 +24,7 @@ Fil est utilisable : on choisit une connexion, on voit les fichiers, on téléch
 - Un serveur SSH ou un certificat inconnu ne passe plus en silence : une page montre l'empreinte et attend l'accord (`Phase.confirming`, `TrustView`). Ce qui est approuvé vit dans `~/Library/Application Support/Fil`, jamais dans `~/.ssh`.
 - « Modifier » (⌘E) ouvre un fichier distant dans l'éditeur et renvoie chaque enregistrement (`EditCoordinator`), avec détection de conflit.
 - Décisions des 12 et 13 octobre dans `DECISIONS.md` ; travail restant dans `NEXT.md`.
+- Une application iPhone et iPad (18 octobre) vit dans `iOS/` : WebDAV et kDrive, même modèle que le Mac, pages propres. Elle n'a encore jamais été compilée : voir `NEXT.md`, section iOS.
 
 ## Commandes de vérification
 
