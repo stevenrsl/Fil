@@ -164,6 +164,20 @@ final class WebDAVListingTests: XCTestCase {
         let kdrive = WebDAVProvider(connection: RemoteConnection(host: "123456", port: 8443, protocol: .kdrive, username: "moi@exemple.fr"), password: "x")
         XCTAssertEqual(kdrive.root.absoluteString, "https://123456.connect.kdrive.infomaniak.com:8443")
     }
+
+    /// iOS garde sur disque les requêtes d'une session d'arrière-plan : rien d'autre ne doit s'y garder.
+    func testBackgroundSessionKeepsNothing() {
+        let identifier = BackgroundTransferSession.makeIdentifier()
+        XCTAssertTrue(identifier.hasPrefix(BackgroundTransferSession.identifierPrefix))
+        XCTAssertNotEqual(identifier, BackgroundTransferSession.makeIdentifier())
+        let configuration = BackgroundTransferSession.configuration(identifier: identifier)
+        XCTAssertEqual(configuration.identifier, identifier)
+        XCTAssertNil(configuration.urlCredentialStorage)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertFalse(configuration.isDiscretionary)
+    }
 }
 
 final class SFTPPacketTests: XCTestCase {

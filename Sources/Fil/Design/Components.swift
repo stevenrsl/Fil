@@ -8,7 +8,7 @@ struct AccentButtonStyle: ButtonStyle {
         configuration.label
             .font(TypeScale.button)
             .foregroundStyle(Palette.onAccent)
-            .padding(.horizontal, 18).frame(minHeight: 36)
+            .padding(.horizontal, 18).frame(minHeight: Spacing.control)
             .background(Palette.accent, in: Capsule())
             .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

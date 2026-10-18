@@ -6,7 +6,7 @@ import Security
 enum FilSupportFolder {
     static var url: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("Fil", isDirectory: true)
     }
 
@@ -79,12 +79,15 @@ extension CertificateInfo {
         let subjectSequence = SecCertificateCopyNormalizedSubjectSequence(certificate) as Data?
         let issuerSequence = SecCertificateCopyNormalizedIssuerSequence(certificate) as Data?
         var expiry: Date?
+        #if os(macOS)
+        // iOS ne publie pas `SecCertificateCopyValues` : la date d'expiration n'y est pas montrée.
         var error: Unmanaged<CFError>?
         if let values = SecCertificateCopyValues(certificate, [kSecOIDX509V1ValidityNotAfter] as CFArray, &error) as? [String: Any],
            let entry = values[kSecOIDX509V1ValidityNotAfter as String] as? [String: Any],
            let seconds = entry["value"] as? Double {
             expiry = Date(timeIntervalSinceReferenceDate: seconds)
         }
+        #endif
         self.init(
             sha256: CertificateInfo.sha256Hex(of: der),
             subject: subject,

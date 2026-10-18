@@ -28,7 +28,9 @@ final class AppModel {
         didSet { preferences.editorURL = editorURL }
     }
     let transfers: TransferQueue
+    #if os(macOS)
     let edits: EditCoordinator
+    #endif
 
     @ObservationIgnored private var lastUsedID: UUID?
     @ObservationIgnored private let store: ConnectionStore
@@ -37,11 +39,14 @@ final class AppModel {
     @ObservationIgnored private let makeProvider: (RemoteConnection, String) -> any RemoteFileProvider
     @ObservationIgnored private let knownHosts: FilKnownHosts
     @ObservationIgnored private let certificates: PinnedCertificates
+    #if os(macOS)
     @ObservationIgnored private let probeFTPS: (RemoteConnection, String) async -> FTPSProbe.Result
     @ObservationIgnored private let volumes: any FinderVolumes
+    #endif
     @ObservationIgnored private var connectTask: Task<Void, Never>?
     @ObservationIgnored private var probeTask: Task<Void, Never>?
 
+    #if os(macOS)
     init(
         store: ConnectionStore = ConnectionStore(),
         preferences: Preferences = Preferences(),
@@ -79,6 +84,33 @@ final class AppModel {
             browser.refresh()
         }
     }
+    #else
+    /// iOS : ni modification sur place, ni Finder, ni FTP à sonder. Le reste est identique.
+    init(
+        store: ConnectionStore = ConnectionStore(),
+        preferences: Preferences = Preferences(),
+        secrets: any SecretStore = KeychainStore(),
+        transfers: TransferQueue = TransferQueue(),
+        makeProvider: @escaping (RemoteConnection, String) -> any RemoteFileProvider = ProviderFactory.make,
+        knownHosts: FilKnownHosts = .standard,
+        certificates: PinnedCertificates = .standard
+    ) {
+        self.store = store
+        self.preferences = preferences
+        self.secrets = secrets
+        self.transfers = transfers
+        self.makeProvider = makeProvider
+        self.knownHosts = knownHosts
+        self.certificates = certificates
+        let snapshot = store.load()
+        self.connections = snapshot.connections
+        self.lastUsedID = snapshot.lastUsedID
+        self.downloadFolder = preferences.downloadFolder
+        self.editorURL = preferences.editorURL
+        self.selectedConnectionID = snapshot.connections.first { $0.id == snapshot.lastUsedID }?.id ?? snapshot.connections.first?.id
+        self.savedPasswordIDs = Set(snapshot.connections.map(\.id).filter(secrets.hasPassword))
+    }
+    #endif
 
     // MARK: Lecture
 
@@ -228,10 +260,16 @@ final class AppModel {
             do {
                 let home = try await provider.connect()
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
+                #if os(macOS)
                 let finder = FinderMount.isSupported(connection.protocol) ? FinderAccess(volumes: self.volumes, password: password) : nil
                 self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers, edits: self.edits, finder: finder) { [weak self] in
                     self?.downloadFolder ?? Preferences().downloadFolder
                 }
+                #else
+                self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers) { [weak self] in
+                    self?.downloadFolder ?? Preferences().downloadFolder
+                }
+                #endif
                 self.phase = .browsing(connection)
                 self.startFTPSProbe(for: connection, password: password)
             } catch {
@@ -303,6 +341,7 @@ final class AppModel {
     private func startFTPSProbe(for connection: RemoteConnection, password: String) {
         probeTask?.cancel()
         ftpsOfferedFor = nil
+        #if os(macOS)
         let current = connections.first { $0.id == connection.id } ?? connection
         guard current.protocol == .ftp, !current.ftpsOfferDismissed else { return }
         let probe = probeFTPS
@@ -312,6 +351,7 @@ final class AppModel {
                   case .browsing(let open) = self.phase, open.id == connection.id else { return }
             self.ftpsOfferedFor = connection.id
         }
+        #endif
     }
 
     /// Passe la connexion en FTPS et la rouvre : les mots de passe et fichiers suivants sont chiffrés.

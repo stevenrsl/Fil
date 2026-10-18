@@ -1,4 +1,8 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 enum Palette {
@@ -15,13 +19,23 @@ enum Palette {
     static let accentInk = adaptive(light: (0.22, 0.40, 0.70), dark: (0.61, 0.80, 1.00))
     static let alert = adaptive(light: (0.60, 0.27, 0.23), dark: (0.93, 0.58, 0.52))
     static let alertWash = adaptive(light: (0.97, 0.91, 0.89), dark: (0.24, 0.13, 0.13))
+    /// Fond de l'aperçu photo, et son texte : noir dans les deux apparences, seule la photo a de la couleur.
+    static let darkroom = Color.black
+    static let onDarkroom = Color.white
     /// Pour le seul avertissement « non chiffré » : ni alarme, ni accent.
     static let caution = adaptive(light: (0.55, 0.42, 0.16), dark: (0.90, 0.76, 0.45))
 
     private static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
+        #if os(macOS)
         Color(nsColor: NSColor(name: nil) { appearance in
             let values = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
             return NSColor(calibratedRed: values.0, green: values.1, blue: values.2, alpha: 1)
         })
+        #else
+        Color(uiColor: UIColor { traits in
+            let values = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
+        })
+        #endif
     }
 }

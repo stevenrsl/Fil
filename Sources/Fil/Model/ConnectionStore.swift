@@ -66,11 +66,17 @@ struct Preferences {
 
     var downloadFolder: URL {
         get {
+            #if os(iOS)
+            // Le chemin du conteneur change d'une mise à jour à l'autre : rien à retenir. Documents est
+            // ce que l'app Fichiers montre sous « Sur mon iPhone › Fil ».
+            return URL.documentsDirectory
+            #else
             if let path = defaults.string(forKey: Self.downloadFolderKey) {
                 return URL(fileURLWithPath: path, isDirectory: true)
             }
             return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
                 ?? FileManager.default.homeDirectoryForCurrentUser
+            #endif
         }
         nonmutating set { defaults.set(newValue.path, forKey: Self.downloadFolderKey) }
     }

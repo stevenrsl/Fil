@@ -47,6 +47,23 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 - **Éditeur réel** : le lancement de l'éditeur (`EditorLauncher`) n'est pas couvert par les tests, qui injectent un faux ouvreur.
 - **Proposition FTPS sur un vrai hébergeur** : validée contre un serveur local avec certificat de test, pas encore contre un serveur public (OVH, etc.).
 
+## iOS
+
+- **Jamais compilé ici.** La cible iOS a été écrite sans Xcode : première chose à faire, l'ouvrir dans Xcode 16+, la lancer sur simulateur puis sur un iPhone, et corriger ce qui casse (concurrence Swift 6, API UIKit).
+- **Transferts en arrière-plan : vérifier sur un iPhone.** Lancer un gros envoi et un dossier, verrouiller, attendre la notification ; vérifier que le renommage `.filpart` passe au réveil, qu'iOS enchaîne les fichiers d'un dossier (il peut les espacer), qu'un défi d'authentification ou un certificat épinglé ne bloque pas Fil suspendu, et que les sessions orphelines se soldent après un Fil tué. La progression n'avance pas pendant que Fil dort : elle reprend au retour.
+- **Reprendre après un Fil tué.** Aujourd'hui, les fichiers que la session d'arrière-plan termine pour un Fil disparu sont jetés. Rattacher une session orpheline à une file reconstruite demanderait de persister la file (voir « Reprise entre deux sessions »).
+- **FTP, FTPS et SFTP sur iOS.** Demandent une bibliothèque embarquée : libcurl compilée pour iOS (FTP, FTPS), et une pile SSH (libssh2, ou SwiftNIO SSH en Swift). Décision de dépendance à prendre et à consigner avant d'écrire une ligne.
+- **Envoyer des photos : vérifier à la main.** Le nom reçu de Photos (`IMG_1234.HEIC` ou un nom générique) dépend de la version d'iOS ; dans un même envoi, deux noms identiques deviennent « nom (2) », mais un nom déjà présent sur le serveur demande confirmation avant de le remplacer. Une photo iCloud non téléchargée attend le réseau sans phrase dédiée.
+- **Certificat auto-signé sur iOS** : l'épinglage passe par le même délégué qu'au Mac, mais App Transport Security ajoute ses exigences (TLS 1.2, SHA-256, confidentialité persistante). À vérifier contre un NAS réel.
+- **Réseau local** : la première connexion à un NAS déclenche la demande d'accès au réseau local (`NSLocalNetworkUsageDescription`). Vérifier qu'un refus donne une phrase lisible plutôt qu'un délai d'attente.
+- **Favoris entre Mac et iPhone** : aucun partage aujourd'hui. iCloud (clé-valeur pour les favoris, trousseau synchronisé pour les mots de passe) serait le chemin naturel.
+- **iPad** : les pages iPhone s'affichent en plein écran. Une barre latérale des connexions, comme sur Mac, et le glisser-déposer depuis Fichiers seraient plus naturels.
+- **Phrase de fin d'un téléchargement** : « Téléchargé dans « Documents » », alors que l'app Fichiers montre « Sur mon iPhone › Fil ».
+- **Aperçu photo : zoom et vignettes.** Pas de pincement pour zoomer (l'image est réduite à la taille de l'écran ; zoomer demanderait de redécoder à pleine définition). Pas de vignettes dans la liste : sans vignettes côté serveur, il faudrait télécharger chaque photo entière. Nextcloud en sert (`/index.php/core/preview`) ; kDrive par son API.
+- **Aperçu des vidéos et des PDF** : Quick Look (`QLPreviewController`) le ferait à partir du même cache.
+- **Aperçu et session d'arrière-plan** : l'aperçu télécharge par la session d'arrière-plan du fournisseur, plus lente à démarrer qu'une session ordinaire. À mesurer ; au besoin, un téléchargement « au premier plan » dans `RemoteFileProvider`.
+- **Modification sur place et « Partager vers Fil »** (extension de partage pour envoyer depuis une autre app) : non portés.
+
 ## Application
 
 - **Préférences séparées** : `swift run Fil` lit le domaine `Fil`, `Fil.app` lit `com.fil.app`. Les favoris ne sont donc pas partagés entre les deux. À unifier quand l'identifiant définitif sera choisi.

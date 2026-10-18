@@ -32,14 +32,17 @@ final class BrowserModel {
 
     @ObservationIgnored let provider: any RemoteFileProvider
     @ObservationIgnored let transfers: TransferQueue
+    #if os(macOS)
     @ObservationIgnored private let edits: EditCoordinator
-    @ObservationIgnored private let downloadFolder: @MainActor () -> URL
     @ObservationIgnored private let finder: FinderAccess?
+    #endif
+    @ObservationIgnored private let downloadFolder: @MainActor () -> URL
     /// Derniers listings vus, pour afficher tout de suite en revenant. Toujours relu derrière.
     @ObservationIgnored private var cache: [RemotePath: [RemoteFile]] = [:]
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
 
+    #if os(macOS)
     init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, edits: EditCoordinator = EditCoordinator(), finder: FinderAccess? = nil, downloadFolder: @escaping @MainActor () -> URL) {
         self.connection = connection
         self.finder = finder
@@ -51,6 +54,17 @@ final class BrowserModel {
         self.downloadFolder = downloadFolder
         load(home)
     }
+    #else
+    init(connection: RemoteConnection, provider: any RemoteFileProvider, home: RemotePath, transfers: TransferQueue, downloadFolder: @escaping @MainActor () -> URL) {
+        self.connection = connection
+        self.provider = provider
+        self.home = home
+        self.path = home
+        self.transfers = transfers
+        self.downloadFolder = downloadFolder
+        load(home)
+    }
+    #endif
 
     // MARK: Lecture
 
@@ -148,6 +162,7 @@ final class BrowserModel {
 
     // MARK: Actions
 
+    #if os(macOS)
     /// Un seul fichier est sélectionné, et c'est bien un fichier : on peut le modifier sur place.
     var canEditSelection: Bool {
         let chosen = selectedFiles
@@ -163,6 +178,7 @@ final class BrowserModel {
     func edit(_ file: RemoteFile) {
         notice = edits.start(file, via: provider)
     }
+    #endif
 
     func downloadSelection() {
         download(selectedFiles)
@@ -191,6 +207,7 @@ final class BrowserModel {
 
     // MARK: Finder
 
+    #if os(macOS)
     /// WebDAV et kDrive seulement : le Finder monterait les autres en lecture seule, ou pas du tout.
     var canOpenInFinder: Bool { finder != nil && FinderMount.isSupported(connection.protocol) }
 
@@ -230,6 +247,7 @@ final class BrowserModel {
             activity = nil
         }
     }
+    #endif
 
     func delete(_ chosen: [RemoteFile]) {
         guard !chosen.isEmpty else { return }
@@ -256,9 +274,11 @@ final class BrowserModel {
     func renameProblem(_ file: RemoteFile, to name: String) -> String? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed == file.name { return nil }
+        #if os(macOS)
         if let session = edits.session(under: file.path, on: connection.id) {
             return "« \(session.name) » est ouvert dans l'éditeur. Termine la modification avant de renommer."
         }
+        #endif
         // Un nom qui ne diffère que par la casse désigne le même fichier sur bien des serveurs : on l'autorise.
         return nameProblem(trimmed, emptyReason: "Donne un nom.", ignoring: file)
     }

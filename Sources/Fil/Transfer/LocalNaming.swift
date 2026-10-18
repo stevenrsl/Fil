@@ -74,7 +74,7 @@ enum LocalFile {
     static func openForWriting(_ url: URL, resumingAt offset: Int64) throws -> FileHandle {
         if offset <= 0 {
             guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
-                throw ProviderError.server("Impossible de créer « \(url.lastPathComponent) » sur ce Mac.")
+                throw ProviderError.server("Impossible de créer « \(url.lastPathComponent) » sur \(Platform.device).")
             }
             return try FileHandle(forWritingTo: url)
         }

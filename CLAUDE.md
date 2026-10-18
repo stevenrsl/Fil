@@ -16,7 +16,7 @@ Fait pour 3 h du matin : choisir une connexion, voir les fichiers, lancer un tra
 
 ## Règles non négociables
 
-- macOS natif, SwiftUI/AppKit, SwiftPM seul au démarrage.
+- macOS natif, SwiftUI/AppKit, SwiftPM seul au démarrage. iOS en second, par un projet Xcode qui compile les mêmes sources.
 - Le modèle ne dépend jamais de SwiftUI. Les effets réseau sont derrière des protocoles testables.
 - Une seule source pour les jetons visuels : `Sources/Fil/Design/`.
 - Une page par phase, pilotée par un modèle observable. Pas de navigation empilée pour les états d'un transfert.
@@ -37,6 +37,7 @@ Sources/Fil/
   App/         état observable et composition de l'application
   Design/      Palette, TypeScale, Radius, composants
   Views/       une vue par phase et réglages
+iOS/           application iPhone et iPad : projet Xcode, pages iOS (Fil/Views/), effets système iOS
 Tests/         tests du modèle, des règles, des fournisseurs simulés et d'intégration
 docs/          décisions, reprise, plan protocole et guide testeurs
 Support/       notes de distribution et informations macOS
@@ -55,6 +56,9 @@ swift test
 swift run Fil
 Tools/integration-tests.sh   # vrais serveurs locaux SFTP, WebDAV, FTP, FTPS
 Tools/bundle.sh              # .build/Fil.app signé ad hoc
+open iOS/Fil.xcodeproj       # iOS : Xcode 16+, choisir une équipe de signature
 ```
+
+La cible iOS lit directement `Sources/Fil/{Model,Design,Transfer,App}` (dossiers synchronisés). Un fichier ajouté là part aussi sur iOS : s'il dépend d'AppKit, de NetFS, de libcurl ou de `ssh`, l'ajouter aux exclusions de `iOS/Fil.xcodeproj` ou garder son code par `#if os(macOS)`. `IOSProjectTests` le rappelle.
 
 Pour une future distribution, construire hors d'un dossier synchronisé, signer, puis recopier avec `ditto --noextattr --norsrc`.
