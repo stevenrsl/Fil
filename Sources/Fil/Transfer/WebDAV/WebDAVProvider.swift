@@ -1,35 +1,70 @@
 import Foundation
 import Security
 
+/// Ce qu'un fournisseur WebDAV dit de sa session d'arrière-plan, pour qu'iOS puisse la retrouver
+/// quand il réveille Fil. Aucune implémentation sur macOS : le Mac ne suspend pas Fil.
+protocol BackgroundSessionRegistry: Sendable {
+    func opened(_ identifier: String)
+    func closed(_ identifier: String)
+    /// Toutes les nouvelles de la session ont été livrées : iOS peut rendormir Fil.
+    func eventsFinished(_ identifier: String)
+}
+
 /// WebDAV en HTTPS, kDrive compris. Les chemins de navigation sont relatifs à la racine WebDAV.
 final class WebDAVProvider: RemoteFileProvider {
     let connection: RemoteConnection
     let root: URL
     private let rootPath: String
+    /// Requêtes courtes : PROPFIND, HEAD, MOVE, MKCOL, DELETE.
     private let session: URLSession
     private let relay: WebDAVSessionRelay
+    /// GET et PUT de fichiers. La même session que `session`, sauf avec `background` : une session
+    /// d'arrière-plan, qui continue quand iOS suspend Fil (elle n'accepte que des tâches sur fichier).
+    private let transferSession: URLSession
+    private let transferRelay: WebDAVSessionRelay
+    private let background: (any BackgroundSessionRegistry)?
 
     /// `root` remplace l'URL déduite de la connexion. Réservé aux tests d'intégration.
-    init(connection: RemoteConnection, password: String, root: URL? = nil) {
+    init(connection: RemoteConnection, password: String, root: URL? = nil, background: (any BackgroundSessionRegistry)? = nil) {
         self.connection = connection
         let root = root ?? Self.defaultRoot(for: connection)
         self.root = root
         self.rootPath = root.path.removingPercentEncoding ?? root.path
         let user = connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        relay = WebDAVSessionRelay(
-            credential: user.isEmpty ? nil : URLCredential(user: user, password: password, persistence: .forSession),
-            pinnedSHA256: connection.trustedCertificate?.sha256
-        )
+        let credential = user.isEmpty ? nil : URLCredential(user: user, password: password, persistence: .forSession)
+        let pinned = connection.trustedCertificate?.sha256
+        let relay = WebDAVSessionRelay(credential: credential, pinnedSHA256: pinned)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.httpMaximumConnectionsPerHost = 4
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        session = URLSession(configuration: configuration, delegate: relay, delegateQueue: nil)
+        let session = URLSession(configuration: configuration, delegate: relay, delegateQueue: nil)
+        self.relay = relay
+        self.session = session
+
+        self.background = background
+        if let background {
+            // Le mot de passe passe par la réponse au défi d'authentification, jamais par un en-tête :
+            // iOS enregistre les requêtes d'une session d'arrière-plan pour les mener à terme sans Fil.
+            let transferRelay = WebDAVSessionRelay(credential: credential, pinnedSHA256: pinned, background: background)
+            let identifier = BackgroundTransferSession.makeIdentifier()
+            self.transferRelay = transferRelay
+            self.transferSession = URLSession(configuration: BackgroundTransferSession.configuration(identifier: identifier), delegate: transferRelay, delegateQueue: nil)
+            background.opened(identifier)
+        } else {
+            self.transferRelay = relay
+            self.transferSession = session
+        }
     }
 
     deinit {
         session.invalidateAndCancel()
+        // Plus aucun transfert ne tient ce fournisseur : sa session d'arrière-plan n'a plus rien à mener.
+        if let background, let identifier = transferSession.configuration.identifier {
+            transferSession.invalidateAndCancel()
+            background.closed(identifier)
+        }
     }
 
     static func defaultRoot(for connection: RemoteConnection) -> URL {
@@ -62,7 +97,7 @@ final class WebDAVProvider: RemoteFileProvider {
             var request = makeRequest(url(for: file.path, directory: false), method: "GET")
             if start > 0 { request.setValue("bytes=\(start)-", forHTTPHeaderField: "Range") }
             do {
-                let response = try await run(session.downloadTask(with: request), destination: destination, offset: start, progress: progress)
+                let response = try await run(transferSession.downloadTask(with: request), destination: destination, offset: start, progress: progress)
                 // 416 : le fichier a changé de taille depuis le début du téléchargement. On recommence.
                 if start > 0, (response as? HTTPURLResponse)?.statusCode == 416 {
                     start = 0
@@ -79,7 +114,7 @@ final class WebDAVProvider: RemoteFileProvider {
     func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         var request = makeRequest(url(for: destination, directory: false), method: "PUT")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        let response = try await run(session.uploadTask(with: request, fromFile: source), destination: nil, progress: progress)
+        let response = try await run(transferSession.uploadTask(with: request, fromFile: source), destination: nil, progress: progress)
         try check(response, subject: destination.name)
     }
 
@@ -145,7 +180,7 @@ final class WebDAVProvider: RemoteFileProvider {
 
     private func run(_ task: URLSessionTask, destination: URL?, offset: Int64 = 0, progress: @escaping ProgressHandler) async throws -> URLResponse {
         do {
-            return try await relay.run(task, destination: destination, offset: offset, progress: progress)
+            return try await transferRelay.run(task, destination: destination, offset: offset, progress: progress)
         } catch {
             throw translate(error)
         }
@@ -153,7 +188,7 @@ final class WebDAVProvider: RemoteFileProvider {
 
     /// Un certificat refusé coupe la requête : l'erreur d'`URLSession` ne dit rien. Le relais, lui, a vu le certificat.
     private func translate(_ error: Error) -> Error {
-        guard let presented = relay.takeUntrustedCertificate() else { return error }
+        guard let presented = relay.takeUntrustedCertificate() ?? transferRelay.takeUntrustedCertificate() else { return error }
         // Approuvé autrefois et plus reconnu : on refuse. Jamais vu : on le montre à l'utilisateur.
         if connection.trustedCertificate != nil { return ProviderError.certificateChanged(host: connection.resolvedHost) }
         return ProviderError.certificateToConfirm(presented)
@@ -226,14 +261,23 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
 
     private let credential: URLCredential?
     private let pinnedSHA256: String?
+    private let background: (any BackgroundSessionRegistry)?
     private let lock = NSLock()
     private var pending: [Int: Pending] = [:]
     private var untrusted: CertificateInfo?
 
-    init(credential: URLCredential?, pinnedSHA256: String? = nil) {
+    init(credential: URLCredential?, pinnedSHA256: String? = nil, background: (any BackgroundSessionRegistry)? = nil) {
         self.credential = credential
         self.pinnedSHA256 = pinnedSHA256
+        self.background = background
     }
+
+    #if os(iOS)
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        guard let identifier = session.configuration.identifier else { return }
+        background?.eventsFinished(identifier)
+    }
+    #endif
 
     /// Le dernier certificat refusé, une seule fois.
     func takeUntrustedCertificate() -> CertificateInfo? {
@@ -367,3 +411,27 @@ final class WebDAVSessionRelay: NSObject, URLSessionTaskDelegate, URLSessionDown
 
 /// Le serveur a répondu 206 pour une autre plage que celle demandée : on repart de zéro.
 struct WebDAVResumeMismatch: Error {}
+
+/// Session d'arrière-plan des transferts WebDAV : un identifiant par fournisseur, rien de gardé hors d'elle.
+enum BackgroundTransferSession {
+    static let identifierPrefix = "com.fil.transfers."
+
+    static func makeIdentifier() -> String { identifierPrefix + UUID().uuidString }
+
+    static func configuration(identifier: String) -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
+        #if os(iOS)
+        // Réveiller Fil à la fin d'un fichier, pour enchaîner le suivant et dire quand tout est fini.
+        configuration.sessionSendsLaunchEvents = true
+        #endif
+        configuration.isDiscretionary = false
+        configuration.httpMaximumConnectionsPerHost = 4
+        // Ni cache, ni cookies, ni identifiants enregistrés : comme la session éphémère des requêtes courtes.
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+        return configuration
+    }
+}

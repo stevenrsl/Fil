@@ -63,9 +63,9 @@ struct TransfersSheet: View {
         NavigationStack {
             List {
                 if queue.hasActive {
-                    // Toute attente a une phrase, et celle-ci est la limite qu'iOS impose.
+                    // Toute attente a une phrase, et celle-ci dit ce qu'iOS permet.
                     Section {
-                        Text("Garde Fil ouvert jusqu'à la fin : iOS suspend les transferts peu après que Fil passe en arrière-plan. L'écran reste allumé en attendant.")
+                        Text("Tu peux quitter Fil et verrouiller l'iPhone : les fichiers continuent en arrière-plan, et une notification dit la fin. Entre deux fichiers d'un dossier, iOS peut faire attendre la suite. Fermer Fil depuis le sélecteur d'apps arrête tout.")
                             .font(TypeScale.label)
                             .foregroundStyle(Palette.inkSoft)
                             .listRowBackground(Palette.accentWash)

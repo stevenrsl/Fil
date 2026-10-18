@@ -1,8 +1,10 @@
 import UIKit
 import UserNotifications
 
-/// Pendant un transfert, l'écran ne s'éteint pas, et iOS accorde un court sursis si Fil passe en
-/// arrière-plan. Une notification dit la fin quand Fil n'est pas devant.
+/// Autour de la file : un sursis quand Fil passe en arrière-plan, et une notification à la fin quand
+/// Fil n'est pas devant. Les fichiers WebDAV, eux, passent par une session d'arrière-plan
+/// (`BackgroundSessions`) et continuent sans ce sursis ; il sert aux requêtes courtes qui suivent
+/// chaque fichier (renommage d'un envoi, fichier suivant d'un dossier).
 @MainActor
 final class MobileTransferActivity: TransferActivity {
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -11,23 +13,21 @@ final class MobileTransferActivity: TransferActivity {
 
     func began() {
         isRunning = true
-        // À 3 h du matin, le téléphone posé à côté : l'écran reste allumé tant que ça tourne.
-        UIApplication.shared.isIdleTimerDisabled = true
-        if backgroundTask == .invalid {
-            // Quelques dizaines de secondes, pas davantage : iOS suspend ensuite Fil, et les transferts avec.
-            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Transferts") { [weak self] in
-                MainActor.assumeIsolated { self?.endBackgroundTask() }
-            }
-        }
+        beginBackgroundTask()
         if !askedForNotifications {
             askedForNotifications = true
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
     }
 
+    /// iOS rend la main à Fil pour lui livrer un fichier terminé : le temps d'enchaîner la suite.
+    func wokeInBackground() {
+        guard isRunning else { return }
+        beginBackgroundTask()
+    }
+
     func ended(_ outcome: TransferBatchOutcome?) {
         isRunning = false
-        UIApplication.shared.isIdleTimerDisabled = false
         // Devant Fil, la barre des transferts suffit ; la notification est pour celui qui est parti ailleurs.
         guard let outcome, UIApplication.shared.applicationState != .active else {
             endBackgroundTask()
@@ -44,6 +44,14 @@ final class MobileTransferActivity: TransferActivity {
                 guard let self, !self.isRunning else { return }
                 self.endBackgroundTask()
             }
+        }
+    }
+
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        // Une trentaine de secondes, pas davantage : assez pour les requêtes courtes entre deux fichiers.
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Transferts") { [weak self] in
+            MainActor.assumeIsolated { self?.endBackgroundTask() }
         }
     }
 
