@@ -248,3 +248,12 @@
 **Sécurité.** iOS enregistre les requêtes d'une session d'arrière-plan pour les mener sans Fil : aucun mot de passe n'y figure. L'identifiant passe par la réponse au défi d'authentification, en mémoire (`.forSession`) ; la session n'a ni cache, ni cookies, ni stockage d'identifiants. Un certificat épinglé est vérifié par le même délégué.
 
 **Fil tué entre-temps** (mémoire, ou fermeture depuis le sélecteur d'apps). La file vivait en mémoire : personne n'attend plus ces fichiers. Les identifiants des sessions ouvertes sont notés dans les préférences (`fil.backgroundSessions`, rien de secret) ; au lancement suivant, ou au réveil qu'iOS provoque pour elles, ces sessions sont rouvertes, leurs tâches annulées, puis fermées. Un envoi interrompu laisse son `.filpart` sur le serveur, comme sur Mac.
+
+## 2026-10-18 · iOS : aperçu des photos
+
+**Décision.** Sur iOS, toucher une photo (extension dont l'`UTType` est une image : JPEG, HEIC, PNG, RAW…) l'ouvre en plein écran ([`PhotoPreviewPage`](../iOS/Fil/Views/PhotoPreviewPage.swift)) au lieu de la télécharger ; on balaie vers les autres photos du dossier, dans l'ordre affiché. Les autres fichiers gardent le geste d'avant. [`PhotoPreviewModel`](../iOS/Fil/PhotoPreviewModel.swift) télécharge le fichier entier par le fournisseur dans `Caches/Aperçus`, le réduit par ImageIO à 2 800 px de côté (orientation EXIF appliquée, aperçu intégré pour les RAW) et ne garde en mémoire que la photo affichée et ses voisines ; la suivante se charge dès que l'affichée est prête, une à la fois. « Enregistrer dans Fichiers » (le seul bouton plein) copie le fichier du cache dans `Documents` sans retélécharger, et le partage d'iOS envoie le fichier d'origine vers Photos, Messages ou AirDrop. Fond noir dans les deux apparences ([`Palette.darkroom`](../Sources/Fil/Design/Palette.swift)).
+
+**Pourquoi.** Un dossier de photos (1 703 JPEG de 20 à 28 Mo dans le premier essai réel) se parcourt pour choisir, pas pour tout télécharger. WebDAV ne fournit pas de vignettes : le fichier entier est le seul chemin sans API propre au serveur. Une photo par une, avec la suivante préparée, garde le geste fluide sans saturer le lien.
+
+**Cache.** Une entrée par version du fichier (chemin, taille, date du listing) : un fichier changé sur le serveur ne ressort jamais du cache. Le dossier est effacé à chaque lancement, et iOS peut le vider quand il veut.
+

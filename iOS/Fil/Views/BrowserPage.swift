@@ -4,7 +4,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Phase « fichiers » : naviguer, télécharger d'un geste, envoyer depuis l'app Fichiers ou Photos.
-/// Toucher un dossier l'ouvre, toucher un fichier le télécharge dans « Sur mon iPhone › Fil ».
+/// Toucher un dossier l'ouvre, une photo l'affiche, tout autre fichier se télécharge dans « Sur mon iPhone › Fil ».
 struct BrowserPage: View {
     @Bindable var browser: BrowserModel
     let close: () -> Void
@@ -14,6 +14,7 @@ struct BrowserPage: View {
     @State private var isPickingPhotos = false
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var staging: String?
+    @State private var preview: PhotoPreviewModel?
     @State private var pendingDeletion: [RemoteFile] = []
     @State private var pendingUpload: [URL] = []
     @State private var isNamingFolder = false
@@ -80,6 +81,9 @@ struct BrowserPage: View {
         }
         .onChange(of: browser.path) { _, _ in
             editMode = .inactive
+        }
+        .fullScreenCover(item: $preview) { model in
+            PhotoPreviewPage(model: model, downloadFolder: Preferences().downloadFolder)
         }
     }
 
@@ -190,7 +194,7 @@ struct BrowserPage: View {
             FileRow(file: file)
         } else {
             Button {
-                browser.open([file.id])
+                open(file)
             } label: {
                 FileRow(file: file)
             }
@@ -202,6 +206,11 @@ struct BrowserPage: View {
             }
             .contextMenu {
                 if file.kind == .file {
+                    if file.isPreviewableImage {
+                        Button {
+                            open(file)
+                        } label: { Label("Aperçu", systemImage: "eye") }
+                    }
                     Button {
                         browser.download([file])
                     } label: { Label("Télécharger", systemImage: "arrow.down.circle") }
@@ -225,6 +234,12 @@ struct BrowserPage: View {
                 } label: { Label("Supprimer…", systemImage: "trash") }
             }
         }
+    }
+
+    /// Une photo s'ouvre en aperçu, parmi les photos du dossier dans l'ordre affiché ; le reste suit `BrowserModel.open`.
+    private func open(_ file: RemoteFile) {
+        guard file.isPreviewableImage else { return browser.open([file.id]) }
+        preview = PhotoPreviewModel(files: browser.visibleFiles.filter(\.isPreviewableImage), startingAt: file, provider: browser.provider)
     }
 
     private func message(_ text: String) -> some View {
@@ -407,7 +422,7 @@ private struct FileRow: View {
         switch file.kind {
         case .directory: file.isSymbolicLink ? "folder.badge.questionmark" : "folder"
         case .link: "arrow.turn.down.right"
-        case .file: "doc"
+        case .file: file.isPreviewableImage ? "photo" : "doc"
         }
     }
 

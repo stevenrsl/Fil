@@ -59,6 +59,9 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 - **Favoris entre Mac et iPhone** : aucun partage aujourd'hui. iCloud (clé-valeur pour les favoris, trousseau synchronisé pour les mots de passe) serait le chemin naturel.
 - **iPad** : les pages iPhone s'affichent en plein écran. Une barre latérale des connexions, comme sur Mac, et le glisser-déposer depuis Fichiers seraient plus naturels.
 - **Phrase de fin d'un téléchargement** : « Téléchargé dans « Documents » », alors que l'app Fichiers montre « Sur mon iPhone › Fil ».
+- **Aperçu photo : zoom et vignettes.** Pas de pincement pour zoomer (l'image est réduite à la taille de l'écran ; zoomer demanderait de redécoder à pleine définition). Pas de vignettes dans la liste : sans vignettes côté serveur, il faudrait télécharger chaque photo entière. Nextcloud en sert (`/index.php/core/preview`) ; kDrive par son API.
+- **Aperçu des vidéos et des PDF** : Quick Look (`QLPreviewController`) le ferait à partir du même cache.
+- **Aperçu et session d'arrière-plan** : l'aperçu télécharge par la session d'arrière-plan du fournisseur, plus lente à démarrer qu'une session ordinaire. À mesurer ; au besoin, un téléchargement « au premier plan » dans `RemoteFileProvider`.
 - **Modification sur place et « Partager vers Fil »** (extension de partage pour envoyer depuis une autre app) : non portés.
 
 ## Application

@@ -10,6 +10,7 @@ struct FilMobileApp: App {
 
     init() {
         UploadStaging.purge()
+        PhotoPreviewModel.purgeCache()
         // Sessions d'arrière-plan d'une vie antérieure de Fil : leur file n'existe plus.
         BackgroundSessions.shared.adoptLeftovers()
         let model = AppModel(makeProvider: MobileProviders.make)

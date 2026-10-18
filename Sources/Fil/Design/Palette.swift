@@ -19,6 +19,9 @@ enum Palette {
     static let accentInk = adaptive(light: (0.22, 0.40, 0.70), dark: (0.61, 0.80, 1.00))
     static let alert = adaptive(light: (0.60, 0.27, 0.23), dark: (0.93, 0.58, 0.52))
     static let alertWash = adaptive(light: (0.97, 0.91, 0.89), dark: (0.24, 0.13, 0.13))
+    /// Fond de l'aperçu photo, et son texte : noir dans les deux apparences, seule la photo a de la couleur.
+    static let darkroom = Color.black
+    static let onDarkroom = Color.white
     /// Pour le seul avertissement « non chiffré » : ni alarme, ni accent.
     static let caution = adaptive(light: (0.55, 0.42, 0.16), dark: (0.90, 0.76, 0.45))
 
