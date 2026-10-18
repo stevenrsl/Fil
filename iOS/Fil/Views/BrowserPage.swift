@@ -1,8 +1,9 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Phase « fichiers » : naviguer, télécharger d'un geste, envoyer depuis l'app Fichiers.
+/// Phase « fichiers » : naviguer, télécharger d'un geste, envoyer depuis l'app Fichiers ou Photos.
 /// Toucher un dossier l'ouvre, toucher un fichier le télécharge dans « Sur mon iPhone › Fil ».
 struct BrowserPage: View {
     @Bindable var browser: BrowserModel
@@ -10,6 +11,8 @@ struct BrowserPage: View {
 
     @State private var editMode: EditMode = .inactive
     @State private var isImporting = false
+    @State private var isPickingPhotos = false
+    @State private var photoSelection: [PhotosPickerItem] = []
     @State private var staging: String?
     @State private var pendingDeletion: [RemoteFile] = []
     @State private var pendingUpload: [URL] = []
@@ -31,6 +34,13 @@ struct BrowserPage: View {
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.item, .folder], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { stage(urls) }
+        }
+        // Format d'origine (HEIC, HEVC) : un serveur de fichiers garde ce qu'on lui confie, sans conversion.
+        .photosPicker(isPresented: $isPickingPhotos, selection: $photoSelection, maxSelectionCount: nil, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current)
+        .onChange(of: photoSelection) { _, items in
+            guard !items.isEmpty else { return }
+            photoSelection = []
+            stagePhotos(items)
         }
         .confirmationDialog(deletionTitle, isPresented: isPresenting($pendingDeletion), titleVisibility: .visible) {
             Button("Supprimer", role: .destructive) {
@@ -99,6 +109,9 @@ struct BrowserPage: View {
                         isImporting = true
                     } label: { Label("Envoyer des fichiers", systemImage: "square.and.arrow.up") }
                     Button {
+                        isPickingPhotos = true
+                    } label: { Label("Envoyer des photos", systemImage: "photo.on.rectangle") }
+                    Button {
                         folderName = ""
                         isNamingFolder = true
                     } label: { Label("Nouveau dossier", systemImage: "folder.badge.plus") }
@@ -150,7 +163,7 @@ struct BrowserPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         default:
             if browser.files.isEmpty {
-                message("Ce dossier est vide. Envoie des fichiers depuis le menu en haut à droite.")
+                message("Ce dossier est vide. Envoie des fichiers ou des photos depuis le menu en haut à droite.")
             } else if browser.visibleFiles.isEmpty {
                 message("Aucun élément ne correspond à « \(browser.filter) ».")
             } else {
@@ -289,6 +302,42 @@ struct BrowserPage: View {
             case .success(let copies): requestUpload(copies)
             case .failure(let error): browser.notice = ReadableError.message(for: error)
             }
+        }
+    }
+
+    /// Recopie les photos et vidéos choisies une à une (une vidéo pèse vite plusieurs gigaoctets),
+    /// puis les confie à la file comme n'importe quel fichier.
+    private func stagePhotos(_ items: [PhotosPickerItem]) {
+        staging = items.count == 1 ? "Préparation de l'élément choisi dans Photos…" : "Préparation de \(Format.items(items.count)) choisis dans Photos…"
+        Task {
+            var copies: [URL] = []
+            var unreadable = 0
+            var failure: Error?
+            for item in items {
+                do {
+                    if let media = try await item.loadTransferable(type: StagedMedia.self) {
+                        copies.append(media.url)
+                    } else {
+                        unreadable += 1
+                    }
+                } catch {
+                    failure = error
+                    unreadable += 1
+                }
+            }
+            do {
+                copies = try UploadStaging.distinctNames(copies)
+            } catch {
+                failure = error
+                unreadable += copies.count
+                copies = []
+            }
+            staging = nil
+            if unreadable > 0 {
+                let what = unreadable == 1 ? "Un élément de Photos n'a pas pu être lu" : "\(Format.count(unreadable)) éléments de Photos n'ont pas pu être lus"
+                browser.notice = what + (failure.map { " : \(ReadableError.message(for: $0))" } ?? ".") + (copies.isEmpty ? "" : " Les autres partent.")
+            }
+            requestUpload(copies)
         }
     }
 
