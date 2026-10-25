@@ -37,41 +37,44 @@ struct ConnectionPage: View {
                 note(for: connection.protocol)
             }
 
-            Section("Serveur") {
-                TextField(hostPlaceholder(connection.protocol), text: Binding(
-                    get: { connection.host },
-                    set: { model.updateHost(id, to: $0) }
-                ))
-                .textContentType(.URL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .onSubmit { model.commitHost(id) }
-                LabeledContent("Port") {
-                    TextField("Port", value: binding(\.port, connection), format: .number.grouping(.never))
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                TextField(connection.protocol.pathIsRoot ? "Racine WebDAV (/ par défaut)" : "Dossier de départ", text: binding(\.path, connection))
+            // Un protocole pas encore branché sur iOS ne montre pas de champs à remplir pour rien.
+            if connection.protocol.isAvailable {
+                Section("Serveur") {
+                    TextField(hostPlaceholder(connection.protocol), text: Binding(
+                        get: { connection.host },
+                        set: { model.updateHost(id, to: $0) }
+                    ))
+                    .textContentType(.URL)
+                    .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-            }
+                    .onSubmit { model.commitHost(id) }
+                    LabeledContent("Port") {
+                        TextField("Port", value: binding(\.port, connection), format: .number.grouping(.never))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    TextField(connection.protocol.pathIsRoot ? "Racine WebDAV (/ par défaut)" : "Dossier de départ", text: binding(\.path, connection))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
 
-            Section {
-                TextField(connection.protocol == .kdrive ? "moi@exemple.fr" : "Identifiant", text: binding(\.username, connection))
-                    .textContentType(.username)
-                    .keyboardType(connection.protocol == .kdrive ? .emailAddress : .default)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                SecureField(model.hasSavedPassword ? "Enregistré dans le trousseau" : "Mot de passe", text: $model.passwordDraft)
-                    .textContentType(.password)
-                    .onSubmit { model.connect() }
-                if model.hasSavedPassword {
-                    Button("Oublier le mot de passe") { model.forgetPassword(id) }
-                        .buttonStyle(QuietButtonStyle())
+                Section {
+                    TextField(connection.protocol == .kdrive ? "moi@exemple.fr" : "Identifiant", text: binding(\.username, connection))
+                        .textContentType(.username)
+                        .keyboardType(connection.protocol == .kdrive ? .emailAddress : .default)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField(model.hasSavedPassword ? "Enregistré dans le trousseau" : "Mot de passe", text: $model.passwordDraft)
+                        .textContentType(.password)
+                        .onSubmit { model.connect() }
+                    if model.hasSavedPassword {
+                        Button("Oublier le mot de passe") { model.forgetPassword(id) }
+                            .buttonStyle(QuietButtonStyle())
+                    }
+                } header: {
+                    Text(connection.protocol == .kdrive ? "Compte Infomaniak" : "Identifiants")
                 }
-            } header: {
-                Text(connection.protocol == .kdrive ? "Compte Infomaniak" : "Identifiants")
             }
 
             if let certificate = connection.trustedCertificate {
@@ -136,6 +139,7 @@ struct ConnectionPage: View {
         }
         .padding(.horizontal, Spacing.page).padding(.vertical, Spacing.regular)
         .background(Palette.ground)
+        .overlay(alignment: .top) { Divider().overlay(Palette.hairline) }
     }
 
     private func binding<Value>(_ keyPath: WritableKeyPath<RemoteConnection, Value>, _ fallback: RemoteConnection) -> Binding<Value> {
@@ -163,7 +167,7 @@ struct ConnectionPage: View {
         case .sftp: "exemple.fr"
         case .webdav: "cloud.exemple.fr"
         case .kdrive: "123456 ou 123456.connect.kdrive.infomaniak.com"
-        case .protonDrive: "Indisponible pour l'instant"
+        case .protonDrive: "Aucune adresse : compte Proton Drive"
         }
     }
 }

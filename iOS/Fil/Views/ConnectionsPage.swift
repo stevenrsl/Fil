@@ -110,6 +110,8 @@ struct ConnectionsPage: View {
                     }
                     Spacer(minLength: 0)
                 }
+                // Une connexion qu'iOS ne sait pas encore ouvrir reste visible, en retrait.
+                .opacity(connection.protocol.isAvailable ? 1 : 0.55)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
