@@ -19,7 +19,11 @@ public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiabl
     /// Raison lisible quand le protocole n'est pas encore branché, `nil` sinon.
     public var unavailableReason: String? {
         switch self {
-        case .protonDrive: return "Proton Drive passera par le CLI officiel de Proton. Cette intégration n'est pas encore branchée."
+        #if os(iOS)
+        case .protonDrive: return "Proton Drive nécessite le CLI officiel, disponible sur macOS mais pas encore sur iPhone et iPad."
+        #else
+        case .protonDrive: return nil
+        #endif
         #if os(iOS)
         // FTP passe par la libcurl de macOS et SFTP par /usr/bin/ssh : ni l'une ni l'autre n'existe sur iOS.
         case .ftp, .ftps, .sftp: return "\(label) n'est pas encore disponible sur iPhone et iPad. Sur iOS, Fil commence par WebDAV et kDrive."
@@ -105,6 +109,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
 
     /// Adresse réellement contactée. Pour kDrive, un identifiant numérique seul suffit.
     public var resolvedHost: String {
+        if `protocol` == .protonDrive { return "" }
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
         if `protocol` == .kdrive, !trimmed.isEmpty, trimmed.allSatisfy(\.isASCIIDigit) {
             return "\(trimmed).connect.kdrive.infomaniak.com"

@@ -184,10 +184,15 @@ final class ReadinessTests: XCTestCase {
         XCTAssertEqual(Readiness.connecting(RemoteConnection(host: "123456", protocol: .kdrive)).reason, "Ajoute l'adresse e-mail de ton compte Infomaniak.")
     }
 
-    func testProtonDriveIsHonestlyUnavailable() {
+    func testProtonDriveNeedsNoServerAddressOnMac() {
         let readiness = Readiness.connecting(RemoteConnection(host: "x", protocol: .protonDrive))
+        #if os(macOS)
+        XCTAssertTrue(readiness.isReady)
+        XCTAssertNil(RemoteProtocol.protonDrive.unavailableReason)
+        #else
         XCTAssertFalse(readiness.isReady)
         XCTAssertEqual(readiness.reason, RemoteProtocol.protonDrive.unavailableReason)
+        #endif
     }
 
     func testAnonymousFTPIsAllowed() {

@@ -4,6 +4,11 @@ import Foundation
 /// Appelé depuis n'importe quel fil.
 public typealias ProgressHandler = @Sendable (Int64) -> Void
 
+/// Certains moteurs savent télécharger un arbre avec une seule session et leur propre parallélisme.
+protocol DirectoryDownloadProvider: RemoteFileProvider {
+    func downloadDirectory(_ directory: RemoteFile, entries: [RemoteFile], to destination: URL, progress: @escaping ProgressHandler) async throws
+}
+
 /// Contrat commun à tous les protocoles. Aucun type de bibliothèque ne traverse cette frontière.
 /// L'annulation passe par l'annulation de la tâche Swift appelante.
 public protocol RemoteFileProvider: Sendable {

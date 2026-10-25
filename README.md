@@ -13,7 +13,7 @@ Client macOS de transferts distants, pensé pour être plus direct, calme et rap
 | SFTP | fonctionnel (clés, agent, `~/.ssh/config`, mot de passe via le trousseau) | `ssh` de macOS + protocole SFTP v3 en Swift |
 | WebDAV | fonctionnel, HTTPS seulement | URLSession |
 | kDrive | via WebDAV, pas encore éprouvé sur un vrai kDrive | URLSession |
-| Proton Drive | pas encore disponible | — |
+| Proton Drive | CLI officiel téléchargé et vérifié à la première utilisation | Proton Drive CLI |
 
 Un serveur SSH ou un certificat inconnu n'est jamais accepté en silence : Fil montre l'empreinte et attend ton accord. « Modifier » ouvre un fichier distant dans ton éditeur et renvoie chaque enregistrement, en s'arrêtant si le serveur a changé entre-temps.
 

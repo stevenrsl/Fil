@@ -3,6 +3,7 @@ import SwiftUI
 /// Le seul bouton plein d'un écran.
 struct AccentButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -10,9 +11,14 @@ struct AccentButtonStyle: ButtonStyle {
             .foregroundStyle(Palette.onAccent)
             .padding(.horizontal, 18).frame(minHeight: Spacing.control)
             .background(Palette.accent, in: Capsule())
+            // Au survol, un filet d'encre d'accent : le bouton répond sans changer de couleur.
+            .overlay(Capsule().strokeBorder(Palette.accentInk.opacity(isHovered && isEnabled ? 0.35 : 0), lineWidth: 1))
             .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
             .contentShape(Capsule())
+            .onHover { isHovered = $0 }
     }
 }
 

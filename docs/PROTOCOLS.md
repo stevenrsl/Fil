@@ -6,7 +6,7 @@
 | 2 | SFTP | `ssh -s sftp` + protocole v3 en Swift | en place, testé | confirmation d'empreinte, sandbox |
 | 3 | WebDAV | URLSession + XML, HTTPS seulement | en place, testé | serveurs aux réponses atypiques |
 | 4 | kDrive | WebDAV d'abord | en place, non éprouvé sur kDrive réel | limites et authentification propres à kDrive |
-| 5 | Proton Drive | processus CLI officiel | bloqué avec une raison | évolution du CLI, sandbox |
+| 5 | Proton Drive | processus CLI officiel, téléchargé et vérifié par Fil | première intégration | évolution du CLI, sandbox, progrès CLI |
 
 Tous les fournisseurs respectent `RemoteFileProvider`. Ils n'exposent aucun type de bibliothèque au modèle ni aux vues, traduisent leurs erreurs en `ProviderError` lisibles et s'annulent par l'annulation de la tâche Swift.
 

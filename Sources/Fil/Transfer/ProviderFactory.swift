@@ -17,7 +17,11 @@ enum ProviderFactory {
         case .webdav, .kdrive:
             return WebDAVProvider(connection: connection, password: password)
         case .protonDrive:
+            #if os(macOS)
+            return ProtonDriveProvider(connection: connection)
+            #else
             return PlannedProvider(connection: connection)
+            #endif
         }
     }
 }

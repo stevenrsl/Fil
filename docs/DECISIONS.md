@@ -1,5 +1,29 @@
 # Décisions
 
+## 2026-10-25 · Survol du bouton principal
+
+**Décision.** `AccentButtonStyle` répond au survol par un filet d'encre d'accent, sans changer la couleur de fond. L'écran de connexion Proton Drive a son propre chapeau et propose `/my-files` comme dossier.
+
+**Pourquoi.** Sur Mac, le seul bouton plein de l'écran restait inerte sous le pointeur. Le filet confirme la cible tout en gardant le calme de la palette.
+
+## 2026-10-19 · Téléchargement de dossiers Proton en une commande
+
+**Décision.** `DirectoryDownloadProvider` permet à `TransferRunner` de confier un dossier entier au moteur Proton après inventaire. Une commande `filesystem download` remplace les lancements successifs par fichier ; le CLI conserve sa session et gère ses transferts internes. Les octets écrits dans le dossier temporaire sont relevés toutes les 500 ms pour la progression, fichiers seuls compris. L'inventaire et les tailles connues sont vérifiés avant placement dans le dossier réservé par Fil.
+
+**Validation.** Le test réel d'aller-retour couvre aussi cette branche via `TransferRunner.download`. Le gain de débit sur les dossiers de photos reste à mesurer ; cette modification supprime le coût de démarrage du CLI par fichier. Un dossier interrompu dans cette branche repart du début.
+
+## 2026-10-19 · Envois Proton conformes au contrat de transfert
+
+**Correction.** `ProtonDriveProvider.upload` utilise `--file-conflict-strategy create-new-revision` (CLI 0.9.0) et une copie locale temporaire portant le nom distant demandé, notamment `.filpart`. Le CLI conserve le nom local lors de l'envoi. Le remplacement passe par `moveReplacing`, avec mise à l'écart de l'ancienne version avant renommage. La suppression utilise `filesystem trash` : `delete` est réservé aux éléments déjà dans la corbeille. Les téléchargements utilisent également un dossier temporaire isolé avant placement à la destination exacte de Fil.
+
+**Validation.** `FIL_TEST_PROTON_WRITE=1 swift test --filter ProtonDriveTests/testRealUploadReplacementAndDownload` crée un dossier dédié, envoie et remplace un fichier avec un nom distinct de sa source, vérifie le listing et la taille déchiffrée, compare les octets téléchargés, puis met le dossier à la corbeille. Test réussi avec le CLI installé.
+
+## 2026-10-19 · Arguments et lecture du CLI Proton
+
+**Correction.** `ProtonDriveProvider` place `--json` après `filesystem list` : en tête, le CLI 0.9.0 répond `Command not found`, ce qui était faussement traduit en dossier absent. Le listing est un tableau JSON avec `name.value` et `activeRevision.claimedSize` (taille déchiffrée). `ProcessRunner.runCapturingOutput` vide stdout et stderr pendant l'exécution pour éviter de bloquer sur un tube plein.
+
+**Validation.** `ProtonDriveTests` couvre ces formats, le diagnostic et les sorties volumineuses. Avec `FIL_TEST_PROTON=1`, il vérifie aussi connexion et listing réels via le fournisseur Swift, avec la session locale existante.
+
 ## 2026-10-09 · Accent bleu pastel
 
 **Décision.** La famille visuelle principale passe du pastel forêt au bleu pastel froid : fond bleu-gris très léger, accent bleu poudre, encre bleu ardoise.
@@ -101,6 +125,12 @@
 **Décision.** Proton Drive reste dans la liste, marqué « bientôt », et la connexion est bloquée avec une raison lisible ([`RemoteProtocol.unavailableReason`](../Sources/Fil/Model/Remote.swift)).
 
 **Pourquoi.** Aucun faux transfert présenté comme réel. Le CLI officiel doit être validé avant d'écrire l'adaptateur.
+
+## 2026-10-19 · Proton Drive via le CLI officiel téléchargé par Fil
+
+**Décision.** Sur macOS, Fil utilise le CLI officiel Proton Drive 0.9.0 comme fournisseur de fichiers. Il cherche d'abord une installation existante, puis télécharge le binaire correspondant à l'architecture depuis Proton, vérifie son SHA-512 et le conserve dans `Application Support/Fil/ProtonDrive`. L'exécution passe directement par `Process`, sans shell ni secret dans les arguments.
+
+**Pourquoi.** Proton Drive ne fournit pas de WebDAV public et son SDK n'est pas encore destiné aux intégrations tierces de production. Cette approche garde le chiffrement, la session Keychain et la logique de service dans le composant officiel, tout en présentant le même contrat `RemoteFileProvider` au reste de Fil.
 
 ## 2026-10-12 · Serveurs de test locaux
 
@@ -256,4 +286,3 @@
 **Pourquoi.** Un dossier de photos (1 703 JPEG de 20 à 28 Mo dans le premier essai réel) se parcourt pour choisir, pas pour tout télécharger. WebDAV ne fournit pas de vignettes : le fichier entier est le seul chemin sans API propre au serveur. Une photo par une, avec la suivante préparée, garde le geste fluide sans saturer le lien.
 
 **Cache.** Une entrée par version du fichier (chemin, taille, date du listing) : un fichier changé sur le serveur ne ressort jamais du cache. Le dossier est effacé à chaque lancement, et iOS peut le vider quand il veut.
-

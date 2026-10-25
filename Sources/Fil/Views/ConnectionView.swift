@@ -25,7 +25,7 @@ struct ConnectionView: View {
                 PageTrail(text: "Fil")
             }
             Divider().overlay(Palette.hairline).padding(.top, 34)
-            Text("Ajoute un serveur FTP, SFTP ou WebDAV pour commencer. Tu peux coller une adresse complète, comme sftp://moi@exemple.fr.")
+            Text("Ajoute un serveur FTP, SFTP, WebDAV, un kDrive ou ton Proton Drive pour commencer. Tu peux coller une adresse complète, comme sftp://moi@exemple.fr.")
                 .font(TypeScale.body)
                 .foregroundStyle(Palette.inkSoft)
                 .padding(.top, Spacing.loose)
@@ -42,7 +42,7 @@ struct ConnectionView: View {
         return VStack(alignment: .leading, spacing: 0) {
             PageHeader(
                 title: connection.name.isEmpty ? "Sans nom" : connection.name,
-                lede: connection.resolvedHost.isEmpty ? "Renseigne le serveur ; Fil s'occupe du reste." : connection.summary
+                lede: lede(for: connection)
             ) {
                 HStack(alignment: .firstTextBaseline) {
                     PageTrail(text: "Fil · Connexions")
@@ -78,36 +78,38 @@ struct ConnectionView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                GridRow {
-                    fieldLabel(connection.protocol == .kdrive ? "kDrive" : "Adresse")
-                    HStack(spacing: Spacing.regular) {
-                        TextField(hostPlaceholder(connection.protocol), text: Binding(
-                            get: { connection.host },
-                            set: { model.updateHost(id, to: $0) }
-                        ))
-                        .textFieldStyle(FieldStyle())
-                        .onSubmit { model.commitHost(id) }
-                        Text("Port").font(TypeScale.label).foregroundStyle(Palette.inkSoft)
-                        TextField("Port", value: binding(id, \.port, connection), format: .number.grouping(.never))
+                if connection.protocol != .protonDrive {
+                    GridRow {
+                        fieldLabel(connection.protocol == .kdrive ? "kDrive" : "Adresse")
+                        HStack(spacing: Spacing.regular) {
+                            TextField(hostPlaceholder(connection.protocol), text: Binding(
+                                get: { connection.host },
+                                set: { model.updateHost(id, to: $0) }
+                            ))
                             .textFieldStyle(FieldStyle())
-                            .frame(width: 76)
+                            .onSubmit { model.commitHost(id) }
+                            Text("Port").font(TypeScale.label).foregroundStyle(Palette.inkSoft)
+                            TextField("Port", value: binding(id, \.port, connection), format: .number.grouping(.never))
+                                .textFieldStyle(FieldStyle())
+                                .frame(width: 76)
+                        }
                     }
-                }
-                GridRow {
-                    fieldLabel(connection.protocol == .kdrive ? "E-mail" : "Utilisateur")
-                    TextField(userPlaceholder(connection.protocol), text: binding(id, \.username, connection))
-                        .textFieldStyle(FieldStyle())
-                }
-                GridRow {
-                    fieldLabel("Mot de passe")
-                    HStack(spacing: Spacing.regular) {
-                        SecureField(passwordPlaceholder(connection.protocol), text: $model.passwordDraft)
+                    GridRow {
+                        fieldLabel(connection.protocol == .kdrive ? "E-mail" : "Utilisateur")
+                        TextField(userPlaceholder(connection.protocol), text: binding(id, \.username, connection))
                             .textFieldStyle(FieldStyle())
-                            .onSubmit { model.connect() }
-                        if model.hasSavedPassword {
-                            Button("Oublier") { model.forgetPassword(id) }
-                                .buttonStyle(QuietButtonStyle())
-                                .help("Retire ce mot de passe du trousseau.")
+                    }
+                    GridRow {
+                        fieldLabel("Mot de passe")
+                        HStack(spacing: Spacing.regular) {
+                            SecureField(passwordPlaceholder(connection.protocol), text: $model.passwordDraft)
+                                .textFieldStyle(FieldStyle())
+                                .onSubmit { model.connect() }
+                            if model.hasSavedPassword {
+                                Button("Oublier") { model.forgetPassword(id) }
+                                    .buttonStyle(QuietButtonStyle())
+                                    .help("Retire ce mot de passe du trousseau.")
+                            }
                         }
                     }
                 }
@@ -196,7 +198,7 @@ struct ConnectionView: View {
         case .kdrive:
             noteText("Indique l'identifiant de ton kDrive (les chiffres de son adresse) et ton e-mail Infomaniak. Avec la double authentification, crée un mot de passe d'application.")
         case .protonDrive:
-            noteText(proto.unavailableReason ?? "")
+            noteText("Fil télécharge et vérifie le CLI officiel Proton Drive à la première connexion. L’authentification se fait dans ton navigateur et la session reste dans le trousseau macOS.")
         }
     }
 
@@ -213,7 +215,7 @@ struct ConnectionView: View {
         case .sftp: "exemple.fr ou un alias de ~/.ssh/config"
         case .webdav: "cloud.exemple.fr"
         case .kdrive: "123456 ou 123456.connect.kdrive.infomaniak.com"
-        case .protonDrive: "Indisponible pour l'instant"
+        case .protonDrive: "Aucune adresse : compte Proton Drive"
         }
     }
 
@@ -232,6 +234,12 @@ struct ConnectionView: View {
     }
 
     private func pathPlaceholder(_ proto: RemoteProtocol) -> String {
-        proto.pathIsRoot ? "/" : "Dossier personnel"
+        if proto == .protonDrive { return "/my-files" }
+        return proto.pathIsRoot ? "/" : "Dossier personnel"
+    }
+
+    private func lede(for connection: RemoteConnection) -> String {
+        if connection.protocol == .protonDrive { return "Ton Proton Drive, chiffré par le CLI officiel." }
+        return connection.resolvedHost.isEmpty ? "Renseigne le serveur ; Fil s'occupe du reste." : connection.summary
     }
 }

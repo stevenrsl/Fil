@@ -91,6 +91,14 @@ enum TransferRunner {
         let files = entries.filter { !$0.isDirectory }
         report(.planned(bytes: files.reduce(0) { $0 + ($1.byteCount ?? 0) }, files: files.count))
 
+        if let bulk = provider as? any DirectoryDownloadProvider, ledger.completedCount == 0 {
+            try await bulk.downloadDirectory(file, entries: entries, to: root, progress: { report(.bytes($0)) })
+            let total = files.reduce(Int64(0)) { $0 + ($1.byteCount ?? 0) }
+            report.settle(total)
+            report(.fileCompleted(files.count))
+            return
+        }
+
         let base = file.path.components.count
         func localFolder(for path: RemotePath) -> URL {
             path.components.dropFirst(base).dropLast().reduce(root) { $0.appendingPathComponent($1, isDirectory: true) }

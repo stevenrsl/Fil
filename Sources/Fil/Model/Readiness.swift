@@ -18,14 +18,16 @@ public struct Readiness: Equatable, Sendable {
             reasons.append(unavailable)
         }
         let host = connection.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        if host.isEmpty {
+        if connection.protocol == .protonDrive {
+            // Proton Drive est un compte local authentifié par son CLI : pas d'hôte ni de port réseau à saisir.
+        } else if host.isEmpty {
             reasons.append(connection.protocol == .kdrive
                 ? "Ajoute l'identifiant de ton kDrive ou son adresse WebDAV."
                 : "Ajoute l'adresse du serveur.")
         } else if host.contains(where: \.isWhitespace) {
             reasons.append("L'adresse du serveur ne doit pas contenir d'espace.")
         }
-        if !(1...65_535).contains(connection.port) {
+        if connection.protocol != .protonDrive && !(1...65_535).contains(connection.port) {
             reasons.append("Le port doit être compris entre 1 et \(Format.count(65_535)).")
         }
         if connection.protocol == .kdrive, connection.username.trimmingCharacters(in: .whitespaces).isEmpty {
