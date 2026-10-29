@@ -274,7 +274,7 @@ final class AppModel {
                 self.startFTPSProbe(for: connection, password: password)
             } catch {
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
-                self.phase = Self.phase(after: error, for: connection)
+                self.phase = self.phase(after: error, for: connection)
             }
         }
     }
@@ -287,11 +287,18 @@ final class AppModel {
     }
 
     /// Où mène un échec de connexion : une confirmation à demander, un abandon, ou une raison à lire.
-    private static func phase(after error: Error, for connection: RemoteConnection) -> Phase {
+    private func phase(after error: Error, for connection: RemoteConnection) -> Phase {
         if error is CancellationError { return .choosing }
+        if case .certificateChanged(_, let presented?) = error as? ProviderError, let previous = connection.trustedCertificate {
+            return .confirming(connection, .certificateReplacement(previous: previous, presented: presented))
+        }
         switch error as? ProviderError {
         case .hostKeyUnknown(let keys) where !keys.isEmpty: return .confirming(connection, .hostKey(keys))
         case .certificateToConfirm(let certificate): return .confirming(connection, .certificate(certificate))
+        // Un serveur approuvé change de clé ou de certificat : refus par défaut, mais avec un geste explicite
+        // (ancien et nouveau côte à côte) quand on a pu relever ce qu'il présente maintenant.
+        case .hostKeyChanged(_, let presented) where !presented.isEmpty:
+            return .confirming(connection, .hostKeyReplacement(previous: knownHosts.previousKeys(for: presented), presented: presented))
         default: return .failed(connection, reason: ReadableError.message(for: error))
         }
     }
@@ -309,6 +316,17 @@ final class AppModel {
                 try certificates.save(certificate)
                 updateConnection(connection.id) {
                     $0.trustedCertificate = TrustedCertificate(sha256: certificate.sha256, subject: certificate.subject)
+                }
+            case .hostKeyReplacement(_, let presented):
+                try knownHosts.replace(with: presented)
+            case .certificateReplacement(let previous, let presented):
+                try certificates.save(presented)
+                updateConnection(connection.id) {
+                    $0.trustedCertificate = TrustedCertificate(sha256: presented.sha256, subject: presented.subject)
+                }
+                // L'ancien fichier ne sert plus qu'aux connexions qui l'approuvent encore.
+                if !connections.contains(where: { $0.trustedCertificate?.sha256 == previous.sha256 }) {
+                    certificates.remove(previous.sha256)
                 }
             }
         } catch {

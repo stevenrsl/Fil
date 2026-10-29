@@ -190,7 +190,7 @@ final class WebDAVProvider: RemoteFileProvider {
     private func translate(_ error: Error) -> Error {
         guard let presented = relay.takeUntrustedCertificate() ?? transferRelay.takeUntrustedCertificate() else { return error }
         // Approuvé autrefois et plus reconnu : on refuse. Jamais vu : on le montre à l'utilisateur.
-        if connection.trustedCertificate != nil { return ProviderError.certificateChanged(host: connection.resolvedHost) }
+        if connection.trustedCertificate != nil { return ProviderError.certificateChanged(host: connection.resolvedHost, presented: presented) }
         return ProviderError.certificateToConfirm(presented)
     }
 

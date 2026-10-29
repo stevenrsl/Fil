@@ -25,6 +25,8 @@ final class TransferQueue {
 
     @ObservationIgnored private var jobs: [UUID: Job] = [:]
     @ObservationIgnored private var tasks: [UUID: Task<Void, Never>] = [:]
+    /// Transferts qu'on coupe pour les reprendre aussitôt depuis leur partiel (« Relancer »).
+    @ObservationIgnored private var restarting: Set<UUID> = []
 
     struct Job {
         enum Source {
@@ -114,6 +116,8 @@ final class TransferQueue {
     // MARK: Piloter
 
     func cancel(_ id: UUID) {
+        // Annuler pendant une relance l'emporte : personne ne doit reprendre ce que l'utilisateur vient d'abandonner.
+        restarting.remove(id)
         if let task = tasks[id] {
             task.cancel()
         } else if let index = items.firstIndex(where: { $0.id == id }), items[index].isActive {
@@ -147,6 +151,30 @@ final class TransferQueue {
         if !batch.contains(id) { batch.append(id) }
         pump()
         updateActivity()
+    }
+
+    /// Coupe un transfert qui n'avance plus et le reprend aussitôt depuis son partiel, sans rien effacer.
+    /// Ne fait rien pour un transfert qui avance, qui attend, ou qu'une autre application attend.
+    func restart(_ id: UUID, now: Date = .now) {
+        guard canRestart(id, now: now) else { return }
+        restarting.insert(id)
+        tasks[id]?.cancel()
+    }
+
+    /// Vrai pour un transfert en cours dont rien n'avance depuis `TransferItem.stallDelay`.
+    func canRestart(_ id: UUID, now: Date) -> Bool {
+        guard let item = items.first(where: { $0.id == id }), item.stalledFor(now: now) != nil,
+              tasks[id] != nil, let job = jobs[id], !job.isPromised, !restarting.contains(id) else { return false }
+        return true
+    }
+
+    /// Un transfert en cours touche-t-il `path` (ou ce qu'il contient, ou le dossier qui le contient) sur cette connexion ?
+    /// Renommer ce chemin ferait échouer le transfert avec « n'existe pas ».
+    func activeTransfer(touching path: RemotePath, on connectionID: UUID) -> TransferItem? {
+        items.first { item in
+            item.isActive && jobs[item.id]?.provider.connection.id == connectionID
+                && (item.remotePath.hasPrefix(path) || path.hasPrefix(item.remotePath))
+        }
     }
 
     func canRetry(_ id: UUID) -> Bool {
@@ -252,6 +280,9 @@ final class TransferQueue {
     }
 
     private func finish(_ id: UUID, _ state: TransferItem.State, resumable: Bool) {
+        // Coupé pour être relancé : le partiel reste valable, et le transfert repart tout de suite.
+        let relaunch = state == .cancelled && restarting.remove(id) != nil
+        let resumable = resumable || relaunch
         tasks[id] = nil
         if let index = items.firstIndex(where: { $0.id == id }) {
             items[index].state = state
@@ -270,6 +301,10 @@ final class TransferQueue {
         }
         if state == .done { jobs[id]?.onFinish?() }
         keepPromise(id, state)
+        if relaunch {
+            retry(id)
+            return
+        }
         pump()
         updateActivity()
     }

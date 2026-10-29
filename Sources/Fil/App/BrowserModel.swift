@@ -279,6 +279,9 @@ final class BrowserModel {
             return "« \(session.name) » est ouvert dans l'éditeur. Termine la modification avant de renommer."
         }
         #endif
+        if let item = transfers.activeTransfer(touching: file.path, on: connection.id) {
+            return "« \(item.name) » est en cours de transfert. Attends la fin, ou annule-le, avant de renommer."
+        }
         // Un nom qui ne diffère que par la casse désigne le même fichier sur bien des serveurs : on l'autorise.
         return nameProblem(trimmed, emptyReason: "Donne un nom.", ignoring: file)
     }

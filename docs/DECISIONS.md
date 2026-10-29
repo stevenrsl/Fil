@@ -1,5 +1,27 @@
 # Décisions
 
+## 2026-10-29 · Clé ou certificat qui a changé : un geste explicite, ancien et nouveau côte à côte
+
+**Décision.** Un serveur approuvé qui présente autre chose n'est plus une impasse. [`ProviderError.hostKeyChanged`](../Sources/Fil/Transfer/RemoteFileProvider.swift) et `certificateChanged` portent ce que le serveur présente maintenant (`presented`) : [`SFTPProvider`](../Sources/Fil/Transfer/SFTP/SFTPProvider.swift) relève ses clés par `HostKeyDiscovery` (sans s'authentifier), [`FTPProvider`](../Sources/Fil/Transfer/FTP/FTPProvider.swift) lit le certificat par `CertificateReader`, [`WebDAVProvider`](../Sources/Fil/Transfer/WebDAV/WebDAVProvider.swift) a déjà vu le sien. Sans `presented`, le refus reste un refus. [`AppModel`](../Sources/Fil/App/AppModel.swift) en fait une phase `.confirming` avec les nouveaux cas [`TrustRequest.hostKeyReplacement`](../Sources/Fil/Model/Trust.swift) et `certificateReplacement`. [`TrustView`](../Sources/Fil/Views/TrustView.swift) montre « Avant » et « Maintenant » ; **Entrée annule**, remplacer demande un clic sur « Remplacer l'approbation et se connecter » (le seul bouton plein de la page). Remplacer une clé passe par [`FilKnownHosts.replace(with:)`](../Sources/Fil/Transfer/Trust/TrustStores.swift) (retire les lignes de Fil du même hôte et du même type, ajoute les nouvelles) ; remplacer un certificat enregistre le nouveau, repointe la connexion et retire l'ancien fichier PEM si plus personne ne s'en sert. L'ancienne clé est retrouvée dans le fichier de Fil puis dans `~/.ssh/known_hosts` et `/etc/ssh/ssh_known_hosts` ([`previousKeys`](../Sources/Fil/Transfer/Trust/TrustStores.swift)), y compris sous forme condensée (`|1|…`, HMAC-SHA1 recalculé).
+
+**Pourquoi.** Après un renouvellement légitime, « Oublier » ou éditer `known_hosts` à la main était le seul chemin : à 3 h du matin, on contournait Fil. Comparer les deux empreintes à l'écran, sans se connecter ni envoyer de mot de passe, est le geste que ferait un administrateur prudent. Le `known_hosts` de l'utilisateur n'est jamais modifié : un test d'intégration contre un vrai `sshd` vérifie que la clé ajoutée dans le fichier de Fil suffit à `ssh` même quand une ancienne ligne périmée subsiste dans celui de l'utilisateur.
+
+**Limites connues.** Si l'ancienne clé n'est dans aucun fichier lisible, « Avant » le dit au lieu d'inventer. Un rebond (`ProxyJump`) montre toujours plusieurs clés ensemble.
+
+## 2026-10-29 · Relancer un transfert qui n'avance plus
+
+**Décision.** [`TransferQueue.restart(_:now:)`](../Sources/Fil/Transfer/TransferQueue.swift) coupe un transfert dont rien n'avance depuis `TransferItem.stallDelay` et le remet en file aussitôt, sans effacer ses partiels : l'annulation passe par la même tâche, mais `finish` la traite comme une interruption reprenable puis appelle `retry`. Le bouton « Relancer » n'apparaît que pour un transfert bloqué (`canRestart`), à côté d'« Annuler », sur Mac et sur iOS. Ne s'applique pas à un téléchargement promis à une autre application. « Annuler » pendant une relance l'emporte.
+
+**Aussi.** Renommer un chemin que touche un transfert en cours (le fichier, un dossier qui le contient ou qu'il contient) est refusé avec une raison ([`activeTransfer(touching:on:)`](../Sources/Fil/Transfer/TransferQueue.swift)). La reprise d'un téléchargement compare désormais aussi la date du fichier distant ([`LocalPartial.remoteModified`](../Sources/Fil/Transfer/TransferLedger.swift)) : un fichier réécrit à la même taille repart de zéro. Sans date fournie par le serveur, la taille décide seule, comme avant.
+
+**Pourquoi.** « Annuler » effaçait le partiel : devant un transfert figé de 8 Go, c'était perdre des heures. Une date relevée par listing coûte un aller-retour, mais seulement à la reprise.
+
+## 2026-10-29 · Distribution : script de release, rien d'embarqué
+
+**Décision.** [`Tools/release.sh`](../Tools/release.sh) construit en release hors dossier synchronisé, signe avec une identité « Developer ID Application » (`FIL_SIGN_IDENTITY`) et le runtime renforcé, vérifie la signature, soumet à `notarytool` (`FIL_NOTARY_PROFILE`, identifiants dans le trousseau, jamais dans le dépôt), agrafe le ticket, contrôle avec `spctl` puis produit `Fil-<version>.zip` par `ditto --noextattr --norsrc`. Il refuse une identité qui n'est pas Developer ID et un dossier de sortie qui ressemble à un dossier synchronisé. Aucun fichier d'entitlements : la libcurl du système et `/usr/bin/ssh` ne demandent rien de plus sous le runtime renforcé. L'identifiant de bundle (`com.fil.app`) n'est pas changé ici.
+
+**Non vérifié.** Le script n'a pas été exécuté de bout en bout : cette machine n'a qu'une identité « Apple Development » et aucun profil de notarisation. Seuls ses garde-fous ont été essayés.
+
 ## 2026-10-25 · Survol du bouton principal
 
 **Décision.** `AccentButtonStyle` répond au survol par un filet d'encre d'accent, sans changer la couleur de fond. L'écran de connexion Proton Drive a son propre chapeau et propose `/my-files` comme dossier.

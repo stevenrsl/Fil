@@ -132,7 +132,7 @@ struct TransferRow: View {
                     }
                 }
                 Spacer(minLength: Spacing.tight)
-                action
+                action(now: context.date)
             }
             .padding(.vertical, Spacing.hair)
         }
@@ -149,9 +149,15 @@ struct TransferRow: View {
     }
 
     @ViewBuilder
-    private var action: some View {
+    private func action(now: Date) -> some View {
         if item.isActive {
-            iconButton("xmark.circle", label: "Annuler") { queue.cancel(item.id) }
+            HStack(spacing: 0) {
+                // Un transfert qui n'avance plus se coupe et se reprend depuis son partiel, sans rien effacer.
+                if queue.canRestart(item.id, now: now) {
+                    iconButton("arrow.clockwise", label: "Relancer") { queue.restart(item.id, now: now) }
+                }
+                iconButton("xmark.circle", label: "Annuler") { queue.cancel(item.id) }
+            }
         } else if queue.canRetry(item.id) {
             iconButton("arrow.clockwise", label: "Réessayer") { queue.retry(item.id) }
         } else if item.state == .done, item.direction == .download, !item.isFolder {

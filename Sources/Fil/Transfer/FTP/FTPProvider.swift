@@ -45,11 +45,11 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
         }
     }
 
-    /// Un certificat refusé n'est pas une impasse : soit il a changé depuis qu'on l'a approuvé (on refuse),
-    /// soit on ne l'a jamais vu (on le relève pour que l'utilisateur le vérifie).
+    /// Un certificat refusé n'est pas une impasse : qu'il ait changé depuis qu'on l'a approuvé ou qu'on ne l'ait
+    /// jamais vu, on le relève pour que l'utilisateur le vérifie.
     private func explainUntrustedCertificate() async -> ProviderError {
-        if pinnedCertificate != nil { return .certificateChanged(host: connection.resolvedHost) }
         let presented = try? await CertificateReader.readFTPS(host: connection.resolvedHost, port: connection.port, implicit: security == .implicit)
+        if pinnedCertificate != nil { return .certificateChanged(host: connection.resolvedHost, presented: presented) }
         return presented.map(ProviderError.certificateToConfirm) ?? .certificateUntrusted
     }
 

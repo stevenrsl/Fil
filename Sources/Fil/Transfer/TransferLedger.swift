@@ -11,6 +11,8 @@ final class TransferLedger: @unchecked Sendable {
         let partial: URL
         let final: URL
         let remoteSize: Int64?
+        /// Date du fichier distant vue au départ : deux écritures de même taille ne se distinguent que par elle.
+        var remoteModified: Date? = nil
     }
 
     /// Envoi : le fichier partiel distant, avec la source telle qu'elle était au départ.

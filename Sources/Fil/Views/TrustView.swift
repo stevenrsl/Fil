@@ -20,7 +20,7 @@ struct TrustView: View {
     var page: some View {
             VStack(alignment: .leading, spacing: 0) {
                 PageHeader(title: title, lede: connection.summary) {
-                    PageTrail(text: "Fil · Première connexion")
+                    PageTrail(text: request.isReplacement ? "Fil · Serveur différent" : "Fil · Première connexion")
                 }
                 Divider().overlay(Palette.hairline).padding(.top, 34)
 
@@ -46,6 +46,28 @@ struct TrustView: View {
                             fact("Expire", Format.date(expiry))
                         }
                         fingerprint(certificate.fingerprintLines, caption: "Empreinte SHA-256")
+                    case .hostKeyReplacement(let previous, let presented):
+                        if previous.isEmpty {
+                            fact("Avant", "Introuvable : l'ancienne clé n'est pas dans un fichier que Fil sait relire")
+                        }
+                        ForEach(previous) { key in
+                            fact("Avant", key.typeLabel)
+                            fingerprint([key.fingerprint], caption: "Empreinte")
+                        }
+                        Divider().overlay(Palette.hairline)
+                        ForEach(presented) { key in
+                            fact("Maintenant", key.typeLabel)
+                            fingerprint([key.fingerprint], caption: "Empreinte")
+                        }
+                    case .certificateReplacement(let previous, let presented):
+                        fact("Avant", previous.subject)
+                        fingerprint(previous.fingerprintLines, caption: "Empreinte SHA-256")
+                        Divider().overlay(Palette.hairline)
+                        fact("Maintenant", presented.subject)
+                        if let expiry = presented.notAfter {
+                            fact("Expire", Format.date(expiry))
+                        }
+                        fingerprint(presented.fingerprintLines, caption: "Empreinte SHA-256")
                     }
                 }
                 .padding(Spacing.regular)
@@ -62,12 +84,21 @@ struct TrustView: View {
 
                 HStack(spacing: Spacing.regular) {
                     Spacer()
-                    Button("Annuler", action: decline)
-                        .buttonStyle(QuietButtonStyle())
-                        .keyboardShortcut(.cancelAction)
-                    Button("Faire confiance et se connecter", action: accept)
-                        .buttonStyle(AccentButtonStyle())
-                        .keyboardShortcut(.defaultAction)
+                    if request.isReplacement {
+                        // Remplacer une approbation est le geste risqué : Entrée annule, il faut cliquer pour remplacer.
+                        Button("Remplacer l'approbation et se connecter", action: accept)
+                            .buttonStyle(AccentButtonStyle())
+                        Button("Annuler", action: decline)
+                            .buttonStyle(QuietButtonStyle())
+                            .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button("Annuler", action: decline)
+                            .buttonStyle(QuietButtonStyle())
+                            .keyboardShortcut(.cancelAction)
+                        Button("Faire confiance et se connecter", action: accept)
+                            .buttonStyle(AccentButtonStyle())
+                            .keyboardShortcut(.defaultAction)
+                    }
                 }
                 .padding(.top, Spacing.loose)
             }
@@ -77,6 +108,8 @@ struct TrustView: View {
         switch request {
         case .hostKey: "Première connexion à « \(connection.resolvedHost) »"
         case .certificate: "Certificat à vérifier"
+        case .hostKeyReplacement: "La clé de « \(connection.resolvedHost) » a changé"
+        case .certificateReplacement: "Le certificat de « \(connection.resolvedHost) » a changé"
         }
     }
 
@@ -86,6 +119,10 @@ struct TrustView: View {
             "Fil ne connaissait pas encore ce serveur. Son empreinte est sa signature : elle permet de s'assurer, aux connexions suivantes, qu'on parle bien au même serveur."
         case .certificate:
             "macOS ne reconnaît pas le certificat de ce serveur. C'est courant pour un NAS ou un serveur personnel, mais ce peut aussi être quelqu'un qui se fait passer pour lui."
+        case .hostKeyReplacement:
+            "Ce serveur ne présente plus la clé que tu avais approuvée. C'est normal après une réinstallation ou un changement de machine, mais ce peut aussi être quelqu'un qui se fait passer pour lui. Fil ne s'est pas connecté, et n'a envoyé aucun mot de passe."
+        case .certificateReplacement:
+            "Ce serveur ne présente plus le certificat que tu avais approuvé. C'est normal à un renouvellement, mais ce peut aussi être quelqu'un qui se fait passer pour lui. Fil ne s'est pas connecté, et n'a envoyé aucun mot de passe."
         }
     }
 
@@ -95,6 +132,12 @@ struct TrustView: View {
             "Compare cette empreinte avec celle que ton hébergeur ou ton administrateur t'a donnée. Fil la retient : si elle change un jour, il refusera de se connecter."
         case .certificate:
             "Compare cette empreinte avec celle qu'affiche ton serveur. Fil ne se connectera ensuite qu'à ce certificat précis, et refusera tout autre."
+        case .hostKeyReplacement(let previous, _):
+            previous.isEmpty
+                ? "Demande la nouvelle empreinte à ton administrateur avant de remplacer. Fil retire l'ancienne approbation de son propre fichier et ne touche pas à ton known_hosts."
+                : "Demande à ton administrateur si le serveur a été réinstallé, et compare la nouvelle empreinte avec la sienne. Fil retire l'ancienne approbation de son propre fichier et ne touche pas à ton known_hosts."
+        case .certificateReplacement:
+            "Compare la nouvelle empreinte avec celle qu'affiche ton serveur après son renouvellement. Si tu n'as rien changé, annule."
         }
     }
 

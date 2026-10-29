@@ -75,7 +75,9 @@ public struct CertificateInfo: Equatable, Sendable {
     public var fingerprint: String { Self.grouped(sha256) }
 
     /// L'empreinte sur plusieurs lignes de 16 octets, coupées entre deux octets : elle se compare à l'œil sans bégayer.
-    public var fingerprintLines: [String] {
+    public var fingerprintLines: [String] { Self.lines(of: fingerprint) }
+
+    static func lines(of fingerprint: String) -> [String] {
         let octets = fingerprint.split(separator: ":")
         return stride(from: 0, to: octets.count, by: 16).map { octets[$0..<min($0 + 16, octets.count)].joined(separator: ":") }
     }
@@ -99,10 +101,27 @@ public struct TrustedCertificate: Codable, Equatable, Hashable, Sendable {
     }
 
     public var fingerprint: String { CertificateInfo.grouped(sha256) }
+    public var fingerprintLines: [String] { CertificateInfo.lines(of: fingerprint) }
 }
 
 /// Ce que Fil demande à l'utilisateur de vérifier avant de se connecter.
 public enum TrustRequest: Equatable, Sendable {
+    /// Première rencontre avec un serveur SSH.
     case hostKey([HostKey])
+    /// Première rencontre avec un certificat que le système ne reconnaît pas.
     case certificate(CertificateInfo)
+    /// Un serveur SSH approuvé présente une autre clé. `previous` peut être vide : l'ancienne clé
+    /// vivait dans un fichier que Fil ne sait pas relire (empreinte condensée par un autre outil).
+    case hostKeyReplacement(previous: [HostKey], presented: [HostKey])
+    /// Un certificat approuvé n'est plus celui que présente le serveur.
+    case certificateReplacement(previous: TrustedCertificate, presented: CertificateInfo)
+
+    /// Vrai quand l'utilisateur avait déjà approuvé ce serveur : l'écran doit alors peser le risque,
+    /// pas souhaiter la bienvenue.
+    public var isReplacement: Bool {
+        switch self {
+        case .hostKey, .certificate: false
+        case .hostKeyReplacement, .certificateReplacement: true
+        }
+    }
 }

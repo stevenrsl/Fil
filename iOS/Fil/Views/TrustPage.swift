@@ -12,7 +12,7 @@ struct TrustPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 PageHeader(title: title, lede: connection.summary) {
-                    PageTrail(text: "Fil · Première connexion")
+                    PageTrail(text: request.isReplacement ? "Fil · Serveur différent" : "Fil · Première connexion")
                 }
                 Divider().overlay(Palette.hairline).padding(.top, Spacing.loose)
 
@@ -37,6 +37,18 @@ struct TrustPage: View {
                             fact("Expire", Format.date(expiry))
                         }
                         fingerprint(certificate.fingerprintLines, caption: "Empreinte SHA-256")
+                    case .hostKeyReplacement(let previous, let presented):
+                        // Rebond SSH et known_hosts n'existent pas sur iOS (pas de SFTP) ; le cas est traité par sûreté.
+                        ForEach(previous) { key in fingerprint([key.fingerprint], caption: "Avant") }
+                        ForEach(presented) { key in fingerprint([key.fingerprint], caption: "Maintenant") }
+                    case .certificateReplacement(let previous, let presented):
+                        fact("Avant", previous.subject)
+                        fingerprint(previous.fingerprintLines, caption: "Empreinte SHA-256 avant")
+                        fact("Maintenant", presented.subject)
+                        if let expiry = presented.notAfter {
+                            fact("Expire", Format.date(expiry))
+                        }
+                        fingerprint(presented.fingerprintLines, caption: "Empreinte SHA-256 maintenant")
                     }
                 }
                 .padding(Spacing.regular)
@@ -57,7 +69,7 @@ struct TrustPage: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: Spacing.regular) {
                 Button(action: accept) {
-                    Text("Faire confiance et se connecter").frame(maxWidth: .infinity)
+                    Text(request.isReplacement ? "Remplacer l'approbation et se connecter" : "Faire confiance et se connecter").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(AccentButtonStyle())
                 Button("Annuler", action: decline)
@@ -72,6 +84,8 @@ struct TrustPage: View {
         switch request {
         case .hostKey: "Première connexion à « \(connection.resolvedHost) »"
         case .certificate: "Certificat à vérifier"
+        case .hostKeyReplacement: "La clé de « \(connection.resolvedHost) » a changé"
+        case .certificateReplacement: "Le certificat de « \(connection.resolvedHost) » a changé"
         }
     }
 
@@ -81,6 +95,10 @@ struct TrustPage: View {
             "Fil ne connaissait pas encore ce serveur. Son empreinte est sa signature : elle permet de s'assurer, aux connexions suivantes, qu'on parle bien au même serveur."
         case .certificate:
             "\(Platform.system) ne reconnaît pas le certificat de ce serveur. C'est courant pour un NAS ou un serveur personnel, mais ce peut aussi être quelqu'un qui se fait passer pour lui."
+        case .hostKeyReplacement:
+            "Ce serveur ne présente plus la clé que tu avais approuvée. Ce peut être quelqu'un qui se fait passer pour lui. Fil ne s'est pas connecté, et n'a envoyé aucun mot de passe."
+        case .certificateReplacement:
+            "Ce serveur ne présente plus le certificat que tu avais approuvé. C'est normal à un renouvellement, mais ce peut aussi être quelqu'un qui se fait passer pour lui. Fil ne s'est pas connecté, et n'a envoyé aucun mot de passe."
         }
     }
 
@@ -90,6 +108,10 @@ struct TrustPage: View {
             "Compare cette empreinte avec celle que ton hébergeur ou ton administrateur t'a donnée. Fil la retient : si elle change un jour, il refusera de se connecter."
         case .certificate:
             "Compare cette empreinte avec celle qu'affiche ton serveur. Fil ne se connectera ensuite qu'à ce certificat précis, et refusera tout autre."
+        case .hostKeyReplacement:
+            "Demande à ton administrateur si le serveur a été réinstallé, et compare la nouvelle empreinte avec la sienne."
+        case .certificateReplacement:
+            "Compare la nouvelle empreinte avec celle qu'affiche ton serveur après son renouvellement. Si tu n'as rien changé, annule."
         }
     }
 

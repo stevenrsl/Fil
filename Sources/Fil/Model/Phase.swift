@@ -23,6 +23,12 @@ public enum Phase: Equatable, Sendable {
         return false
     }
 
+    /// Ce que la page de confiance demande de vérifier, quand c'est la phase en cours.
+    public var confirmation: TrustRequest? {
+        if case .confirming(_, let request) = self { return request }
+        return nil
+    }
+
     public var isConfirming: Bool {
         if case .confirming = self { return true }
         return false

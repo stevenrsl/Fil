@@ -106,6 +106,12 @@ final class IntegrationTests: XCTestCase {
         try store.save(other)
         let impostor = FTPProvider(connection: pinned(connection, to: other), password: password, pinnedCertificates: store)
         await assertThrows(ProviderError.certificateChanged(host: "127.0.0.1")) { _ = try await impostor.connect() }
+        // Le refus dit aussi ce que le serveur présente maintenant, pour que l'utilisateur puisse comparer.
+        do {
+            _ = try await impostor.connect()
+        } catch ProviderError.certificateChanged(_, let presented) {
+            XCTAssertEqual(presented?.sha256, certificate.sha256)
+        }
     }
 
     func testWebDAVOverHTTPSShowsAnUnknownCertificateThenAcceptsOnlyIt() async throws {
@@ -290,6 +296,31 @@ final class IntegrationTests: XCTestCase {
         // `known_hosts` qui associe au serveur une autre clé que la sienne.
         let provider = try sftpProvider(knownHosts: try value("FIL_IT_SFTP_WRONG_KNOWN_HOSTS"))
         await assertThrows(ProviderError.hostKeyChanged("127.0.0.1")) { _ = try await provider.connect() }
+    }
+
+    func testSFTPChangedHostKeyCanBeReplacedAfterTheUserCompares() async throws {
+        let folder = try makeTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // L'ancienne clé vit dans le `known_hosts` de l'utilisateur, que Fil ne modifie jamais.
+        let userFile = try value("FIL_IT_SFTP_WRONG_KNOWN_HOSTS")
+        let userFileBefore = try String(contentsOfFile: userFile, encoding: .utf8)
+        let store = FilKnownHosts(url: folder.appendingPathComponent("fil_known_hosts"))
+
+        let refused = try sftpProvider(knownHosts: userFile, trustedHosts: store.url)
+        let presented: [HostKey]
+        do {
+            _ = try await refused.connect()
+            return XCTFail("une clé changée ne doit pas être acceptée en silence")
+        } catch ProviderError.hostKeyChanged(_, let keys) {
+            presented = keys
+        }
+        XCTAssertFalse(presented.isEmpty, "Fil relève la clé que le serveur présente maintenant")
+        XCTAssertFalse(store.previousKeys(for: presented, also: [URL(fileURLWithPath: userFile)]).isEmpty, "et retrouve l'ancienne, dans le fichier de l'utilisateur")
+
+        try store.replace(with: presented)
+        let home = try await sftpProvider(knownHosts: userFile, trustedHosts: store.url).connect()
+        XCTAssertFalse(home.value.isEmpty)
+        XCTAssertEqual(try String(contentsOfFile: userFile, encoding: .utf8), userFileBefore, "le known_hosts de l'utilisateur n'est jamais touché")
     }
 
     func testSFTPChannelReopensAfterADrop() async throws {
@@ -503,7 +534,16 @@ final class IntegrationTests: XCTestCase {
             try await work()
             XCTFail("\(expected) attendu", file: file, line: line)
         } catch {
-            XCTAssertEqual(error as? ProviderError, expected, "reçu : \(error)", file: file, line: line)
+            XCTAssertEqual(Self.withoutPresented(error as? ProviderError), expected, "reçu : \(error)", file: file, line: line)
+        }
+    }
+
+    /// Ce que le serveur présente maintenant se contrôle à part : ici, seule la nature du refus compte.
+    private static func withoutPresented(_ error: ProviderError?) -> ProviderError? {
+        switch error {
+        case .hostKeyChanged(let host, _): .hostKeyChanged(host)
+        case .certificateChanged(let host, _): .certificateChanged(host: host)
+        default: error
         }
     }
 }

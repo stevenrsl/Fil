@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -39,6 +40,59 @@ struct FilKnownHosts: Sendable {
         } catch {
             throw ProviderError.server("Impossible d'enregistrer l'empreinte du serveur : \(error.localizedDescription)")
         }
+    }
+
+    /// Remplace l'approbation d'un serveur dont la clé a changé : les lignes de Fil pour le même hôte et
+    /// le même type de clé partent, les nouvelles arrivent. Le `known_hosts` de l'utilisateur n'est jamais touché.
+    func replace(with keys: [HostKey]) throws {
+        do {
+            try FilSupportFolder.ensure(url.deletingLastPathComponent())
+            let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            let replaced = Set(keys.map { "\($0.host) \($0.type)" })
+            let kept = existing.split(whereSeparator: \.isNewline).filter { raw in
+                let fields = raw.split(whereSeparator: { $0 == " " || $0 == "\t" })
+                return !(fields.count >= 2 && replaced.contains("\(fields[0]) \(fields[1])"))
+            }
+            let text = (kept.map(String.init) + keys.map(\.line)).joined(separator: "\n") + "\n"
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            throw ProviderError.server("Impossible d'enregistrer l'empreinte du serveur : \(error.localizedDescription)")
+        }
+    }
+
+    /// Les anciennes clés des serveurs que `presented` désigne, d'après le fichier de Fil puis ceux de `ssh`.
+    /// Un hôte condensé (`|1|…`) se reconnaît en recalculant son condensé : on ne le lit jamais à l'envers.
+    func previousKeys(for presented: [HostKey], also files: [URL] = FilKnownHosts.systemFiles) -> [HostKey] {
+        var found: [HostKey] = []
+        for file in [url] + files {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for raw in text.split(whereSeparator: \.isNewline) {
+                guard let key = HostKey(knownHostsLine: String(raw)) else { continue }
+                let matches = presented.contains { Self.hostField(key.host, names: $0.host) }
+                if matches, !presented.contains(where: { $0.fingerprint == key.fingerprint }), !found.contains(where: { $0.fingerprint == key.fingerprint }) {
+                    found.append(key)
+                }
+            }
+        }
+        return found
+    }
+
+    /// Le `known_hosts` de l'utilisateur et ceux du système : là où vit souvent l'ancienne clé.
+    static var systemFiles: [URL] {
+        [URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh/known_hosts"),
+         URL(fileURLWithPath: "/etc/ssh/ssh_known_hosts")]
+    }
+
+    /// Vrai si le champ « hôtes » d'une ligne `known_hosts` désigne `name` : liste séparée par des virgules, ou condensé.
+    static func hostField(_ field: String, names name: String) -> Bool {
+        if field.hasPrefix("|1|") {
+            let parts = field.split(separator: "|", omittingEmptySubsequences: true)
+            guard parts.count == 3, let salt = Data(base64Encoded: String(parts[1])), let hash = Data(base64Encoded: String(parts[2])) else { return false }
+            let code = HMAC<Insecure.SHA1>.authenticationCode(for: Data(name.utf8), using: SymmetricKey(data: salt))
+            return Data(code) == hash
+        }
+        return field.split(separator: ",").contains { $0 == name }
     }
 }
 

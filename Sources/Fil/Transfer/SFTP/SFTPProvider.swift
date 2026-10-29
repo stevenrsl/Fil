@@ -190,6 +190,11 @@ actor SFTPProvider: RemoteFileProvider {
             } catch ProviderError.hostKeyUnknown(let keys) where keys.isEmpty {
                 // Serveur jamais vu : on relève ses clés, sans s'authentifier, pour que l'utilisateur les vérifie.
                 throw ProviderError.hostKeyUnknown(try await HostKeyDiscovery.discover(connection: connection, extraOptions: extraOptions))
+            } catch ProviderError.hostKeyChanged(let changedHost, _) {
+                // Clé changée : on relève celle que le serveur présente maintenant, pour que l'utilisateur
+                // puisse la comparer à l'ancienne. Sans elle, le refus reste un refus.
+                let presented = (try? await HostKeyDiscovery.discover(connection: connection, extraOptions: extraOptions)) ?? []
+                throw ProviderError.hostKeyChanged(changedHost, presented: presented)
             }
             return channel
         }

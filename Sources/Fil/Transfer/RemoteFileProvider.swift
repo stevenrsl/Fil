@@ -52,14 +52,16 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     case connectionRefused(host: String, port: Int)
     case timedOut
     case authenticationFailed
-    case hostKeyChanged(String)
+    /// La clé d'un serveur approuvé a changé. `presented` : celles qu'il présente maintenant, quand on a pu les relever.
+    case hostKeyChanged(String, presented: [HostKey] = [])
     /// Première rencontre avec ce serveur SSH. Vide : le fournisseur n'a pas encore relevé ses clés.
     case hostKeyUnknown([HostKey])
     case certificateUntrusted
     /// Certificat non reconnu par le système, relevé pour que l'utilisateur le vérifie avant de l'approuver.
     case certificateToConfirm(CertificateInfo)
     /// Un certificat approuvé autrefois n'est plus celui que présente le serveur.
-    case certificateChanged(host: String)
+    /// `presented` : le certificat que le serveur présente maintenant, quand on a pu le relever.
+    case certificateChanged(host: String, presented: CertificateInfo? = nil)
     case tlsUnavailable
     case notFound(String)
     case accessDenied(String)
@@ -90,7 +92,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
             "Le serveur ne répond pas. Il est peut-être éteint, ou un pare-feu bloque l'accès."
         case .authenticationFailed:
             "Identifiant ou mot de passe refusé par le serveur."
-        case .hostKeyChanged(let host):
+        case .hostKeyChanged(let host, _):
             "L'empreinte de « \(host) » a changé depuis la dernière connexion. Vérifie auprès de l'administrateur avant de continuer ; Fil refuse de se connecter en attendant."
         case .hostKeyUnknown:
             "Fil ne connaît pas encore ce serveur. Vérifie son empreinte avant de lui faire confiance."
@@ -98,7 +100,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
             "Le certificat du serveur n'est pas reconnu par \(Platform.system). Fil refuse de s'y connecter pour protéger ton mot de passe."
         case .certificateToConfirm:
             "Le certificat du serveur n'est pas reconnu par \(Platform.system). Vérifie son empreinte avant de lui faire confiance."
-        case .certificateChanged(let host):
+        case .certificateChanged(let host, _):
             "Le certificat de « \(host) » a changé depuis que tu lui as fait confiance. Si tu n'as rien modifié sur le serveur, ne continue pas : quelqu'un se fait peut-être passer pour lui."
         case .tlsUnavailable:
             "Le serveur ne propose pas de connexion chiffrée. Choisis FTP seulement si le réseau est de confiance."

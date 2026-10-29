@@ -125,13 +125,19 @@ enum TransferRunner {
     private static func downloadFile(_ file: RemoteFile, into folder: URL, via provider: any RemoteFileProvider, ledger: TransferLedger, report: TransferReport, base: Int64) async throws -> URL {
         let key = file.path.value
         var offset: Int64 = 0
-        let reserved: TransferLedger.LocalPartial
+        var reserved: TransferLedger.LocalPartial
         if let known = ledger.localPartial(key), FileManager.default.fileExists(atPath: known.partial.path) {
             reserved = known
-            offset = try await resumableDownloadOffset(known, file: file, via: provider)
+            let resume = try await resumableDownloadOffset(known, file: file, via: provider)
+            offset = resume.offset
+            if offset == 0, let current = resume.modified, current != known.remoteModified {
+                // Réécrit entre deux essais : on repart de zéro, et la nouvelle date devient la référence.
+                reserved.remoteModified = current
+                ledger.setLocalPartial(key, reserved)
+            }
         } else {
             let (final, partial) = try LocalNaming.reserveFile(named: file.name, in: folder)
-            reserved = TransferLedger.LocalPartial(partial: partial, final: final, remoteSize: file.byteCount)
+            reserved = TransferLedger.LocalPartial(partial: partial, final: final, remoteSize: file.byteCount, remoteModified: file.modifiedAt)
             ledger.setLocalPartial(key, reserved)
         }
 
@@ -152,13 +158,30 @@ enum TransferRunner {
         return final
     }
 
-    /// Décalage de reprise d'un téléchargement : seulement si le fichier distant n'a pas bougé de taille.
+    /// Décalage de reprise d'un téléchargement : seulement si le fichier distant n'a bougé ni de taille ni de date.
     /// Une coupure remonte, pour ne jamais écraser un partiel utile à cause d'un réseau qui flanche.
-    private static func resumableDownloadOffset(_ known: TransferLedger.LocalPartial, file: RemoteFile, via provider: any RemoteFileProvider) async throws -> Int64 {
+    /// `modified` : la date actuelle du fichier distant quand on a dû la relever (et qu'elle a changé).
+    private static func resumableDownloadOffset(_ known: TransferLedger.LocalPartial, file: RemoteFile, via provider: any RemoteFileProvider) async throws -> (offset: Int64, modified: Date?) {
         guard let recorded = known.remoteSize, recorded > 0,
-              let local = LocalFile.size(of: known.partial), local > 0, local <= recorded else { return 0 }
-        guard let current = try await partialSize(of: file.path, via: provider), current == recorded else { return 0 }
-        return local
+              let local = LocalFile.size(of: known.partial), local > 0, local <= recorded else { return (0, nil) }
+        guard let current = try await partialSize(of: file.path, via: provider), current == recorded else { return (0, nil) }
+        // Même taille ne veut pas dire même contenu : un journal réécrit pèse parfois pareil. La date tranche
+        // quand le serveur en donne une ; sans date, on s'en tient à la taille.
+        if let before = known.remoteModified, let now = try await modificationDate(of: file.path, via: provider), now != before {
+            return (0, now)
+        }
+        return (local, nil)
+    }
+
+    /// Date actuelle d'un fichier distant, d'après le listing de son dossier ; `nil` si le serveur n'en donne pas.
+    /// Une coupure remonte (la reprise réessaiera) ; toute autre erreur laisse la taille seule décider.
+    private static func modificationDate(of path: RemotePath, via provider: any RemoteFileProvider) async throws -> Date? {
+        do {
+            return try await provider.list(path.parent ?? .root).first { $0.path == path }?.modifiedAt
+        } catch {
+            if error is CancellationError || (error as? ProviderError)?.isInterruption == true { throw error }
+            return nil
+        }
     }
 
     // MARK: Envoi

@@ -108,6 +108,46 @@ final class TrustStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "autre ssh-rsa AAAA\n" + key.line + "\n")
     }
 
+    private let newKey = HostKey(knownHostsLine: "[h]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH6w/OMugEiJ+7sE2ffGxn8EzZTviFfszKKzIf0Czngh")!
+
+    func testReplacingKeysDropsTheOldLineOfTheSameHostAndTypeOnly() throws {
+        let url = folder.appendingPathComponent("known_hosts")
+        let other = "[autre]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMWXZhRKmQ8Idwe+BXrldEX/0ncIT9Tdc0u+i4v3c6YK"
+        let rsa = "[h]:22 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQC"
+        try [key.line, other, rsa].joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        try FilKnownHosts(url: url).replace(with: [newKey])
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), [other, rsa, newKey.line].joined(separator: "\n") + "\n")
+        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        XCTAssertEqual(permissions, 0o600)
+    }
+
+    func testPreviousKeysAreFoundInFilsFileAndTheUsersFileIncludingHashedHosts() throws {
+        let presented = HostKey(host: "[exemple.fr]:22", type: "ssh-ed25519", fingerprint: key.fingerprint, line: "[exemple.fr]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMWXZhRKmQ8Idwe+BXrldEX/0ncIT9Tdc0u+i4v3c6YK")
+        let old = "AAAAC3NzaC1lZDI1NTE5AAAAIH6w/OMugEiJ+7sE2ffGxn8EzZTviFfszKKzIf0Czngh"
+        let fil = FilKnownHosts(url: folder.appendingPathComponent("fil"))
+        try "[exemple.fr]:22 ssh-ed25519 \(old)\n[autre]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMWXZhRKmQ8Idwe+BXrldEX/0ncIT9Tdc0u+i4v3c6YK\n"
+            .write(to: fil.url, atomically: true, encoding: .utf8)
+        let users = folder.appendingPathComponent("users")
+        // Ligne condensée par `ssh-keygen -H` pour « [exemple.fr]:22 », même ancienne clé : jamais comptée deux fois.
+        let hashed = "|1|RRqUgp50kcCYnTNmQQ92mRgMBoI=|UN31Qf7UHwhBsTnxDxWm4ag2XH8= ssh-ed25519 \(old)"
+        try [hashed, "# commentaire"].joined(separator: "\n").write(to: users, atomically: true, encoding: .utf8)
+
+        let found = fil.previousKeys(for: [presented], also: [users, folder.appendingPathComponent("absent")])
+        XCTAssertEqual(found.map(\.fingerprint), [newKey.fingerprint], "l'ancienne clé de ce serveur, une fois, sans celle d'un autre hôte")
+
+        // Seule la copie condensée du `known_hosts` de l'utilisateur la connaît.
+        let onlyHashed = FilKnownHosts(url: folder.appendingPathComponent("vide")).previousKeys(for: [presented], also: [users])
+        XCTAssertEqual(onlyHashed.map(\.fingerprint), [newKey.fingerprint])
+    }
+
+    func testHostFieldsMatchByNameListOrHash() {
+        let hashed = "|1|RRqUgp50kcCYnTNmQQ92mRgMBoI=|UN31Qf7UHwhBsTnxDxWm4ag2XH8="
+        XCTAssertTrue(FilKnownHosts.hostField(hashed, names: "[exemple.fr]:22"))
+        XCTAssertFalse(FilKnownHosts.hostField(hashed, names: "[h]:22"))
+        XCTAssertTrue(FilKnownHosts.hostField("a,[h]:22", names: "[h]:22"))
+        XCTAssertFalse(FilKnownHosts.hostField("|1|pas-du-base64|", names: "h"))
+    }
+
     func testPinnedCertificateIsWrittenAsPEM() throws {
         let store = PinnedCertificates(folder: folder.appendingPathComponent("certificates"))
         let info = try XCTUnwrap(CertificateInfo(der: CertificateVector.der))
@@ -176,6 +216,7 @@ final class TrustFlowTests: XCTestCase {
     private var attempts = 0
 
     private let key = HostKey(knownHostsLine: "[exemple.fr]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMWXZhRKmQ8Idwe+BXrldEX/0ncIT9Tdc0u+i4v3c6YK")!
+    private let newKey = HostKey(knownHostsLine: "[exemple.fr]:22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH6w/OMugEiJ+7sE2ffGxn8EzZTviFfszKKzIf0Czngh")!
 
     override func setUp() async throws {
         suite = "FilTests.\(Self.self)"
@@ -289,6 +330,74 @@ final class TrustFlowTests: XCTestCase {
         XCTAssertNotNil(certificates.pemURL(for: info.sha256), "l'autre connexion s'en sert encore")
         model.forgetCertificate(second)
         XCTAssertNil(certificates.pemURL(for: info.sha256))
+    }
+
+    func testAChangedSSHKeyOffersAReplacementWithTheOldAndTheNewKey() async throws {
+        let model = makeModel(firstError: ProviderError.hostKeyChanged("exemple.fr", presented: [newKey]))
+        try knownHosts.trust([key])
+        await start(model, protocol: .sftp)
+        await waitUntil("confirmation demandée") { model.phase.isConfirming }
+
+        guard case .confirming(_, .hostKeyReplacement(let previous, let presented)) = model.phase else { return XCTFail("\(model.phase)") }
+        XCTAssertEqual(previous, [key])
+        XCTAssertEqual(presented, [newKey])
+        XCTAssertTrue(try XCTUnwrap(model.phase.confirmation).isReplacement)
+        XCTAssertEqual(try String(contentsOf: knownHosts.url, encoding: .utf8), key.line + "\n", "rien ne change avant l'accord")
+        XCTAssertEqual(attempts, 1)
+
+        model.confirmTrust()
+        await waitUntil("connecté après remplacement") { model.phase.isBrowsing }
+        XCTAssertEqual(try String(contentsOf: knownHosts.url, encoding: .utf8), newKey.line + "\n", "l'ancienne approbation est remplacée, pas ajoutée")
+        XCTAssertEqual(attempts, 2)
+    }
+
+    func testDecliningAReplacementKeepsTheOldApproval() async throws {
+        let model = makeModel(firstError: ProviderError.hostKeyChanged("exemple.fr", presented: [newKey]))
+        try knownHosts.trust([key])
+        await start(model, protocol: .sftp)
+        await waitUntil("confirmation demandée") { model.phase.isConfirming }
+        model.declineTrust()
+        XCTAssertEqual(model.phase, .choosing)
+        XCTAssertEqual(try String(contentsOf: knownHosts.url, encoding: .utf8), key.line + "\n")
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testAChangedKeyWeCouldNotReadStaysAPlainRefusal() async {
+        let model = makeModel(firstError: ProviderError.hostKeyChanged("exemple.fr"))
+        await start(model, protocol: .sftp)
+        await waitUntil("échec") { if case .failed = model.phase { true } else { false } }
+        guard case .failed(_, let reason) = model.phase else { return XCTFail() }
+        XCTAssertTrue(reason.contains("a changé"), reason)
+    }
+
+    func testAChangedCertificateOffersAReplacementAndRepinsIt() async throws {
+        let info = try XCTUnwrap(CertificateInfo(der: CertificateVector.der))
+        let old = TrustedCertificate(sha256: String(repeating: "ab", count: 32), subject: "fil-test.example")
+        try certificates.save(CertificateInfo(sha256: old.sha256, subject: old.subject, isSelfSigned: true, notAfter: nil, der: CertificateVector.der))
+        let model = makeModel(firstError: ProviderError.certificateChanged(host: "exemple.fr", presented: info))
+        model.addConnection()
+        let id = model.selectedConnectionID!
+        model.updateProtocol(id, to: .ftps)
+        model.updateConnection(id) { $0.host = "exemple.fr"; $0.username = "moi"; $0.trustedCertificate = old }
+        model.passwordDraft = "mdp"
+        model.connect()
+        await waitUntil("confirmation demandée") { model.phase.isConfirming }
+
+        guard case .confirming(_, .certificateReplacement(let previous, let presented)) = model.phase else { return XCTFail("\(model.phase)") }
+        XCTAssertEqual(previous, old)
+        XCTAssertEqual(presented, info)
+        XCTAssertEqual(model.selectedConnection?.trustedCertificate, old, "rien ne change avant l'accord")
+
+        model.confirmTrust()
+        await waitUntil("connecté après remplacement") { model.phase.isBrowsing }
+        XCTAssertEqual(model.selectedConnection?.trustedCertificate, TrustedCertificate(sha256: info.sha256, subject: info.subject))
+        XCTAssertNotNil(certificates.pemURL(for: info.sha256))
+        XCTAssertNil(certificates.pemURL(for: old.sha256), "l'ancien fichier part quand plus personne ne s'en sert")
+    }
+
+    func testAFirstMeetingIsNotAReplacement() throws {
+        XCTAssertFalse(TrustRequest.hostKey([key]).isReplacement)
+        XCTAssertFalse(TrustRequest.certificate(try XCTUnwrap(CertificateInfo(der: CertificateVector.der))).isReplacement)
     }
 
     func testTrustDoesNotFollowAnotherAddress() throws {

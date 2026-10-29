@@ -106,7 +106,7 @@ struct TransferRow: View {
                     }
                 }
                 Spacer(minLength: Spacing.tight)
-                actions
+                actions(now: context.date)
             }
             .padding(.horizontal, Spacing.page).padding(.vertical, 8)
         }
@@ -123,9 +123,13 @@ struct TransferRow: View {
     }
 
     @ViewBuilder
-    private var actions: some View {
+    private func actions(now: Date) -> some View {
         HStack(spacing: Spacing.tight) {
             if item.isActive {
+                // Un transfert qui n'avance plus se coupe et se reprend depuis son partiel, sans rien effacer.
+                if queue.canRestart(item.id, now: now) {
+                    iconButton("arrow.clockwise", help: "Relancer : coupe la connexion et reprend où le transfert s'est arrêté") { queue.restart(item.id, now: now) }
+                }
                 iconButton("xmark.circle", help: "Annuler") { queue.cancel(item.id) }
             } else if queue.canRetry(item.id) {
                 iconButton("arrow.clockwise", help: "Réessayer") { queue.retry(item.id) }
