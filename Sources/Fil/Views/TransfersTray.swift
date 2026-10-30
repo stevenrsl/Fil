@@ -20,7 +20,8 @@ struct TransfersTray: View {
                         .foregroundStyle(Palette.ink)
                 }
                 .buttonStyle(.plain)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
+                // Le débit et le temps restant bougent seulement pendant un transfert : au repos, rien ne se redessine.
+                TimelineView(.periodic(from: .now, by: queue.hasActive ? 1 : 3600)) { context in
                     Text(summary(now: context.date))
                         .font(TypeScale.label)
                         .foregroundStyle(Palette.inkSoft)
@@ -79,7 +80,7 @@ struct TransferRow: View {
     let queue: TransferQueue
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        TimelineView(.periodic(from: .now, by: item.isActive ? 1 : 3600)) { context in
             HStack(alignment: .center, spacing: Spacing.regular) {
                 Image(systemName: item.direction == .download ? "arrow.down.circle" : "arrow.up.circle")
                     .font(.system(size: 17))

@@ -187,6 +187,70 @@ final class TransferQueueTests: XCTestCase {
         queue.clearFinished()
         XCTAssertTrue(queue.items.isEmpty)
     }
+
+    private func makeSite(files count: Int) throws -> URL {
+        let source = folder.appendingPathComponent("site")
+        try FileManager.default.createDirectory(at: source.appendingPathComponent("css"), withIntermediateDirectories: true)
+        for index in 1...count {
+            try String(repeating: "\(index % 10)", count: 6).write(to: source.appendingPathComponent(index.isMultiple(of: 2) ? "css/\(index).css" : "\(index).html"), atomically: true, encoding: .utf8)
+        }
+        return source
+    }
+
+    func testFolderFilesTravelSeveralAtOnce() async throws {
+        let source = try makeSite(files: 8)
+        let provider = MockProvider(parallelFiles: 3)
+        await provider.set(chunkDelay: .milliseconds(2))
+        let queue = TransferQueue()
+
+        queue.upload([source], into: .root, via: provider)
+        await waitUntil("envoi terminé") { queue.items.first?.state == .done }
+
+        let uploaded = await provider.contents
+        XCTAssertEqual(uploaded.count, 8)
+        XCTAssertEqual(uploaded[RemotePath("/site/css/4.css")], Data("444444".utf8))
+        let peak = await provider.maxRunning
+        XCTAssertGreaterThan(peak, 1)
+        XCTAssertLessThanOrEqual(peak, 3)
+        XCTAssertEqual(queue.items.first?.transferredBytes, 48)
+        XCTAssertEqual(queue.items.first?.completedFiles, 8)
+
+        let back = folder.appendingPathComponent("retour")
+        try FileManager.default.createDirectory(at: back, withIntermediateDirectories: true)
+        let site = try await provider.list(.root).first { $0.name == "site" }!
+        queue.download([site], via: provider, into: back)
+        await waitUntil("téléchargement terminé") { queue.items.count == 2 && queue.items.allSatisfy { $0.state == .done } }
+        XCTAssertEqual(try String(contentsOf: back.appendingPathComponent("site/7.html"), encoding: .utf8), "777777")
+        XCTAssertEqual(try FileManager.default.subpathsOfDirectory(atPath: back.path).filter { $0.hasSuffix(".filpart") }, [])
+    }
+
+    func testConnectionLimitNarrowsTheTransferInsteadOfFailingIt() async throws {
+        let source = try makeSite(files: 8)
+        let provider = MockProvider(parallelFiles: 4)
+        await provider.set(chunkDelay: .milliseconds(2))
+        await provider.set(connectionLimit: 2)
+        let queue = TransferQueue()
+
+        queue.upload([source], into: .root, via: provider)
+        await waitUntil("envoi terminé") { queue.items.first.map { !$0.isActive } == true }
+
+        XCTAssertEqual(queue.items.first?.state, .done)
+        let uploaded = await provider.contents
+        XCTAssertEqual(uploaded.count, 8)
+        XCTAssertFalse(uploaded.keys.contains { $0.value.hasSuffix(".filpart") })
+    }
+
+    func testConnectionLimitStillFailsWhenNoConnectionIsLeft() async throws {
+        let source = try makeSite(files: 3)
+        let provider = MockProvider(parallelFiles: 3)
+        await provider.set(connectionLimit: 0)
+        let queue = TransferQueue()
+
+        queue.upload([source], into: .root, via: provider)
+        await waitUntil("envoi refusé") { queue.items.first.map { !$0.isActive } == true }
+
+        XCTAssertEqual(queue.items.first?.state, .failed(ProviderError.connectionLimit.errorDescription!))
+    }
 }
 
 final class DeleteTreeTests: XCTestCase {

@@ -4,6 +4,8 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 
 ## Transferts
 
+- **Fichiers en parallèle : mesurer sur un vrai serveur** (OVH mutualisé, kDrive) et ajuster `parallelFiles`. Mesuré seulement contre les serveurs locaux. Un serveur qui refuse la connexion de trop sans répondre 421 n'est pas encore reconnu comme une limite.
+- **SFTP : blocs plus grands.** Lectures et écritures de 32 Kio, 64 en vol. L'extension `limits@openssh.com` permettrait des blocs de 256 Kio sur OpenSSH, moins de paquets par mégaoctet.
 - **« Relancer » : vérifier à la main** contre un vrai serveur qui se fige (coupure Wi‑Fi, serveur suspendu). Testé avec un faux fournisseur dont l'attente est annulable ; une libcurl ou un `ssh` qui ne réagit pas à l'annulation ne se couperait pas, comme pour « Annuler ».
 - **Fichier réécrit à la même taille et à la même date** (serveur à date grossière, FTP sans `MLSD`) : la reprise ne le voit pas. Seule une empreinte du contenu le verrait.
 - **Modification sur place hors de la file.** Les téléchargements et envois de l'éditeur (`EditCoordinator`) ne passent pas par `TransferQueue` : ils n'empêchent pas la veille, ne notifient pas et ne disent pas un blocage.

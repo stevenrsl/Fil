@@ -3,7 +3,8 @@ import Foundation
 
 /// FTP et FTPS par la libcurl de macOS.
 /// FTPS explicite (`AUTH TLS`) sur tout port sauf 990, implicite sur 990.
-/// La navigation réutilise une seule connexion ; chaque transfert ouvre la sienne.
+/// La navigation réutilise une seule connexion. Les transferts ont les leurs, gardées ouvertes un court moment
+/// entre deux fichiers : le suivant part sans nouvelle connexion, ni login, ni négociation TLS.
 final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
     enum Security: Equatable { case none, explicit, implicit }
 
@@ -21,6 +22,7 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
     private var supportsMLSD = true
 
     private static let transfers = DispatchQueue(label: "fil.ftp.transfers", qos: .utility, attributes: .concurrent)
+    private let idle = IdleHandles()
 
     init(connection: RemoteConnection, password: String, certificateAuthorities: String? = nil, pinnedCertificates: PinnedCertificates = .standard) {
         self.connection = connection
@@ -90,6 +92,9 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
     }
 
     var canResumeUploads: Bool { true }
+    /// Prudent : beaucoup d'hébergeurs mutualisés plafonnent les connexions par compte. Au-delà, `connectionLimit`
+    /// fait continuer le transfert avec moins de fichiers à la fois.
+    var parallelFiles: Int { 3 }
 
     func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let url = address.fileURL(file.path)
@@ -99,12 +104,13 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
                 let base = start
                 let output = try LocalFile.openForWriting(destination, resumingAt: base)
                 defer { try? output.close() }
-                let handle = try CurlHandle()
+                let handle = try self.idle.take() ?? CurlHandle()
                 let transfer = CurlTransfer(output: output, progress: { progress(base + $0) }, cancellation: flag)
-                self.prepare(handle, url: url)
+                self.prepareTransfer(handle, url: url)
                 if base > 0 { handle.set(CURLOPT_RESUME_FROM_LARGE, offset: base) }
                 switch handle.perform(transfer) {
                 case .success:
+                    self.idle.keep(handle)
                     return
                 case .failure(let failure) where base > 0 && Self.isResumeRefused(failure):
                     // Le serveur ne sait pas reprendre (REST refusé) : on recommence proprement à zéro.
@@ -129,14 +135,15 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
                 // de la taille annoncée, mais ne saute pas le début de la source. Sans ce positionnement,
                 // il enverrait les premiers octets du fichier derrière le partiel : taille juste, contenu faux.
                 try input.seek(toOffset: UInt64(max(0, base)))
-                let handle = try CurlHandle()
+                let handle = try self.idle.take() ?? CurlHandle()
                 let transfer = CurlTransfer(input: input, progress: { progress(base + $0) }, cancellation: flag)
-                self.prepare(handle, url: url)
+                self.prepareTransfer(handle, url: url)
                 handle.set(CURLOPT_UPLOAD, 1)
                 handle.set(CURLOPT_INFILESIZE_LARGE, offset: size)
                 if base > 0 { handle.set(CURLOPT_RESUME_FROM_LARGE, offset: base) }
                 switch handle.perform(transfer) {
                 case .success:
+                    self.idle.keep(handle)
                     return
                 case .failure(let failure) where base > 0 && (Self.isResumeRefused(failure) || Self.isRejectedCommand(failure)):
                     start = 0
@@ -255,6 +262,13 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
         }
     }
 
+    /// Comme `prepare`, avec de grands tampons : moins de rappels et d'appels système par mégaoctet.
+    private func prepareTransfer(_ handle: CurlHandle, url: String) {
+        prepare(handle, url: url)
+        handle.set(CURLOPT_BUFFERSIZE, 512 * 1024)
+        handle.set(CURLOPT_UPLOAD_BUFFERSIZE, 2 * 1024 * 1024)
+    }
+
     private func run<T: Sendable>(on queue: DispatchQueue, _ work: @escaping @Sendable (CancellationFlag) throws -> T) async throws -> T {
         let flag = CancellationFlag()
         return try await withTaskCancellationHandler {
@@ -293,7 +307,7 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
 
     static func describe(_ failure: CurlFailure, host: String, port: Int, subject: String) -> ProviderError {
         if failure.response == 421 {
-            return .server("Le serveur a fermé la connexion : il limite peut-être le nombre de connexions simultanées.")
+            return .connectionLimit
         }
         if failure.response == 530 { return .authenticationFailed }
         switch failure.code {
@@ -325,6 +339,30 @@ final class FTPProvider: RemoteFileProvider, @unchecked Sendable {
             return .server("Le serveur ne répond pas comme un serveur FTP. Vérifie le port et le protocole.")
         default:
             return .server("Erreur FTP : \(failure.detail) (code \(failure.code.rawValue)).")
+        }
+    }
+}
+
+/// Poignées de transfert au repos, connexion ouverte. Seule une poignée qui vient de réussir y entre :
+/// après un échec, la connexion n'est plus sûre. Au-delà de `lifetime`, le serveur a pu la fermer sans
+/// prévenir : on en ouvre une neuve plutôt que de risquer un premier envoi perdu.
+final class IdleHandles: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handles: [(handle: CurlHandle, since: Date)] = []
+    private let capacity = 4
+    private let lifetime: TimeInterval = 15
+
+    func take() -> CurlHandle? {
+        lock.withLock {
+            handles.removeAll { -$0.since.timeIntervalSinceNow > lifetime }
+            return handles.popLast()?.handle
+        }
+    }
+
+    func keep(_ handle: CurlHandle) {
+        lock.withLock {
+            guard handles.count < capacity else { return }
+            handles.append((handle, .now))
         }
     }
 }

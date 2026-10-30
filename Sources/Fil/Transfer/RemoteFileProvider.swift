@@ -13,6 +13,8 @@ protocol DirectoryDownloadProvider: RemoteFileProvider {
 /// L'annulation passe par l'annulation de la tâche Swift appelante.
 public protocol RemoteFileProvider: Sendable {
     var connection: RemoteConnection { get }
+    /// Fichiers d'un même dossier que ce protocole transfère à la fois. 1 : un par un.
+    var parallelFiles: Int { get }
     /// `true` si `upload(resumingAt:)` sait compléter un fichier distant déjà entamé.
     /// Sinon, l'envoi repart de zéro et ne reçoit jamais de décalage.
     var canResumeUploads: Bool { get }
@@ -37,6 +39,8 @@ public protocol RemoteFileProvider: Sendable {
 }
 
 extension RemoteFileProvider {
+    public var parallelFiles: Int { 1 }
+
     func download(_ file: RemoteFile, to destination: URL, progress: @escaping ProgressHandler) async throws {
         try await download(file, to: destination, resumingAt: 0, progress: progress)
     }
@@ -67,6 +71,8 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     case accessDenied(String)
     case alreadyExists(String)
     case connectionLost
+    /// Le serveur refuse une connexion de plus. En parallèle, Fil continue avec celles qu'il a déjà.
+    case connectionLimit
     /// Le transfert s'est terminé sans erreur mais il manque des octets.
     case incomplete(name: String, received: Int64, expected: Int64)
     /// Message déjà formulé pour l'utilisateur.
@@ -75,7 +81,7 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     /// Coupure plutôt que refus : le fichier partiel reste valable, « Réessayer » peut reprendre.
     public var isInterruption: Bool {
         switch self {
-        case .connectionLost, .timedOut, .hostNotFound, .connectionRefused, .incomplete: true
+        case .connectionLost, .connectionLimit, .timedOut, .hostNotFound, .connectionRefused, .incomplete: true
         default: false
         }
     }
@@ -112,6 +118,8 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
             "« \(name) » existe déjà ici."
         case .connectionLost:
             "La connexion au serveur s'est interrompue."
+        case .connectionLimit:
+            "Le serveur a fermé la connexion : il limite le nombre de connexions simultanées."
         case .incomplete(let name, let received, let expected):
             "« \(name) » n'est arrivé qu'en partie (\(Format.progress(received, of: expected)))."
         case .server(let message):

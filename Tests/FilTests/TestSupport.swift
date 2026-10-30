@@ -26,6 +26,7 @@ final class MemorySecretStore: SecretStore, @unchecked Sendable {
 actor MockProvider: RemoteFileProvider {
     nonisolated let connection: RemoteConnection
     nonisolated let canResumeUploads: Bool
+    nonisolated let parallelFiles: Int
     private(set) var tree: [RemotePath: [RemoteFile]]
     private(set) var contents: [RemotePath: Data]
     private(set) var listCalls: [RemotePath] = []
@@ -43,14 +44,17 @@ actor MockProvider: RemoteFileProvider {
     var refuseMove = false
     /// Le serveur annonce un envoi réussi mais garde un octet de moins.
     var dropLastUploadedByte = false
+    /// Le serveur refuse un transfert de plus au-delà de ce nombre en cours (réponse FTP 421).
+    var connectionLimit: Int?
     private(set) var running = 0
     private(set) var maxRunning = 0
     /// Dates des fichiers : une horloge qui n'avance que quand on écrit, pour des tests sans attente.
     private var mtimes: [RemotePath: Date] = [:]
     private var tick = 0
 
-    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:], canResumeUploads: Bool = true, connectError: Error? = nil) {
+    init(connection: RemoteConnection = RemoteConnection(name: "Simulé", host: "simule.test"), home: RemotePath = .root, files: [String: String] = [:], canResumeUploads: Bool = true, connectError: Error? = nil, parallelFiles: Int = 1) {
         self.connection = connection
+        self.parallelFiles = parallelFiles
         self.home = home
         self.connectError = connectError
         self.canResumeUploads = canResumeUploads
@@ -89,6 +93,7 @@ actor MockProvider: RemoteFileProvider {
     func set(interruptAfter: Int?) { self.interruptAfter = interruptAfter }
     func set(refuseMove: Bool) { self.refuseMove = refuseMove }
     func set(dropLastUploadedByte: Bool) { self.dropLastUploadedByte = dropLastUploadedByte }
+    func set(connectionLimit: Int?) { self.connectionLimit = connectionLimit }
 
     /// Remplace (ou crée) un fichier du serveur, comme si quelqu'un d'autre l'avait modifié.
     func put(_ rawPath: String, _ text: String) {
@@ -121,7 +126,7 @@ actor MockProvider: RemoteFileProvider {
     }
 
     func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
-        begin()
+        try begin()
         defer { end() }
         journal.append("download \(file.path) from \(offset)")
         guard let data = contents[file.path] else { throw ProviderError.notFound(file.name) }
@@ -147,7 +152,7 @@ actor MockProvider: RemoteFileProvider {
     }
 
     func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
-        begin()
+        try begin()
         defer { end() }
         journal.append("upload \(destination) from \(offset)")
         let data = try Data(contentsOf: source)
@@ -229,7 +234,8 @@ actor MockProvider: RemoteFileProvider {
         tree[path.parent ?? .root]?.removeAll { $0.path == path }
     }
 
-    private func begin() {
+    private func begin() throws {
+        if let connectionLimit, running >= connectionLimit { throw ProviderError.connectionLimit }
         running += 1
         maxRunning = max(maxRunning, running)
     }

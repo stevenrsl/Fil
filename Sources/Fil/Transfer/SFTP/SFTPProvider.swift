@@ -74,6 +74,8 @@ actor SFTPProvider: RemoteFileProvider {
     }
 
     nonisolated var canResumeUploads: Bool { true }
+    /// Un seul canal multiplexé : plusieurs fichiers à la fois masquent les allers-retours d'ouverture et de fermeture.
+    nonisolated var parallelFiles: Int { 4 }
 
     nonisolated func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         let session = SFTPSession(channel: try await activeChannel())

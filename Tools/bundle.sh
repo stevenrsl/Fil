@@ -22,6 +22,8 @@ BINARY="$(swift build -c "$CONFIGURATION" --show-bin-path)/Fil"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/Fil"
+# En release, les symboles locaux partent : le binaire pèse deux fois moins (3,7 → 1,8 Mo).
+[[ "$CONFIGURATION" == release ]] && strip -x "$APP/Contents/MacOS/Fil"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Support/Icon/Fil.icns" "$APP/Contents/Resources/Fil.icns"
 # La version vient du code (Sources/Fil/Model/AppVersion.swift) ; le numéro de build, du nombre de commits.

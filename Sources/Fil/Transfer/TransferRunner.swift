@@ -74,7 +74,7 @@ enum TransferRunner {
     static func download(_ file: RemoteFile, into folder: URL, via provider: any RemoteFileProvider, ledger: TransferLedger, report: TransferReport) async throws {
         guard file.isDirectory else {
             report(.planned(bytes: file.byteCount ?? 0, files: 1))
-            let final = try await downloadFile(file, into: folder, via: provider, ledger: ledger, report: report, base: 0)
+            let final = try await downloadFile(file, into: folder, via: provider, ledger: ledger, progress: FileProgress(report: report))
             report(.destination(final))
             return
         }
@@ -107,22 +107,22 @@ enum TransferRunner {
             try FileManager.default.createDirectory(at: localFolder(for: directory.path).appendingPathComponent(directory.name, isDirectory: true), withIntermediateDirectories: true)
         }
 
-        var done = ledger.completedBytes
-        if done > 0 {
-            report(.resumed(bytes: done))
+        let tally = ByteTally(settled: ledger.completedBytes)
+        if ledger.completedCount > 0 {
+            report(.resumed(bytes: ledger.completedBytes))
             report(.fileCompleted(ledger.completedCount))
         }
-        for child in files {
-            try Task.checkCancellation()
-            if ledger.isDone(child.path.value) { continue }
-            let final = try await downloadFile(child, into: localFolder(for: child.path), via: provider, ledger: ledger, report: report, base: done)
-            done += LocalFile.size(of: final) ?? child.byteCount ?? 0
-            report.settle(done)
+        let remaining = files.filter { !ledger.isDone($0.path.value) }
+        let folders = remaining.map { localFolder(for: $0.path) }
+        try await forEach(remaining, width: provider.parallelFiles) { index, child in
+            let progress = FileProgress(report: report, tally: tally, slot: index)
+            let final = try await downloadFile(child, into: folders[index], via: provider, ledger: ledger, progress: progress)
+            report.settle(tally.settle(index, LocalFile.size(of: final) ?? child.byteCount ?? 0))
             report(.fileCompleted(ledger.completedCount))
         }
     }
 
-    private static func downloadFile(_ file: RemoteFile, into folder: URL, via provider: any RemoteFileProvider, ledger: TransferLedger, report: TransferReport, base: Int64) async throws -> URL {
+    private static func downloadFile(_ file: RemoteFile, into folder: URL, via provider: any RemoteFileProvider, ledger: TransferLedger, progress: FileProgress) async throws -> URL {
         let key = file.path.value
         var offset: Int64 = 0
         var reserved: TransferLedger.LocalPartial
@@ -141,10 +141,10 @@ enum TransferRunner {
             ledger.setLocalPartial(key, reserved)
         }
 
-        if offset > 0 { report(.resumed(bytes: base + offset)) }
+        if offset > 0 { progress.resumed(offset) }
         // Fichier déjà entièrement là : il ne reste que le renommage.
         if !(offset > 0 && offset == file.byteCount) {
-            try await provider.download(file, to: reserved.partial, resumingAt: offset) { report(.bytes(base + $0)) }
+            try await provider.download(file, to: reserved.partial, resumingAt: offset, progress: progress.bytes)
         }
 
         let received = LocalFile.size(of: reserved.partial) ?? 0
@@ -192,7 +192,7 @@ enum TransferRunner {
         guard isFolder else {
             let size = LocalFile.size(of: source) ?? 0
             report(.planned(bytes: size, files: 1))
-            try await uploadFile(source, to: destination, via: provider, ledger: ledger, report: report, base: 0)
+            try await uploadFile(source, to: destination, via: provider, ledger: ledger, progress: FileProgress(report: report))
             return
         }
 
@@ -206,18 +206,16 @@ enum TransferRunner {
         }
         report(.planned(bytes: total, files: files.count))
 
-        var done = ledger.completedBytes
-        if done > 0 {
-            report(.resumed(bytes: done))
+        let tally = ByteTally(settled: ledger.completedBytes)
+        if ledger.completedCount > 0 {
+            report(.resumed(bytes: ledger.completedBytes))
             report(.fileCompleted(ledger.completedCount))
         }
-        for file in files {
-            try Task.checkCancellation()
-            let target = destination.appending(file.relative)
-            if ledger.isDone(target.value) { continue }
-            try await uploadFile(file.url, to: target, via: provider, ledger: ledger, report: report, base: done)
-            done += file.size
-            report.settle(done)
+        let remaining = files.filter { !ledger.isDone(destination.appending($0.relative).value) }
+        try await forEach(remaining, width: provider.parallelFiles) { index, file in
+            let progress = FileProgress(report: report, tally: tally, slot: index)
+            try await uploadFile(file.url, to: destination.appending(file.relative), via: provider, ledger: ledger, progress: progress)
+            report.settle(tally.settle(index, file.size))
             report(.fileCompleted(ledger.completedCount))
         }
     }
@@ -225,10 +223,10 @@ enum TransferRunner {
     /// Remplace un fichier distant, sous le nom exact donné, par le même chemin atomique que les envois :
     /// nom temporaire, contrôle de taille, renommage. Sert à renvoyer un fichier modifié sur place.
     static func replaceFile(_ source: URL, at destination: RemotePath, via provider: any RemoteFileProvider) async throws {
-        try await uploadFile(source, to: destination, via: provider, ledger: TransferLedger(), report: TransferReport { _ in }, base: 0)
+        try await uploadFile(source, to: destination, via: provider, ledger: TransferLedger(), progress: FileProgress(report: TransferReport { _ in }))
     }
 
-    private static func uploadFile(_ source: URL, to destination: RemotePath, via provider: any RemoteFileProvider, ledger: TransferLedger, report: TransferReport, base: Int64) async throws {
+    private static func uploadFile(_ source: URL, to destination: RemotePath, via provider: any RemoteFileProvider, ledger: TransferLedger, progress: FileProgress) async throws {
         let key = destination.value
         let size = LocalFile.size(of: source) ?? 0
         let modified = (try? source.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? nil
@@ -246,9 +244,9 @@ enum TransferRunner {
             ledger.setRemotePartial(key, TransferLedger.RemotePartial(path: target, sourceSize: size, sourceModified: modified))
         }
 
-        if offset > 0 { report(.resumed(bytes: base + offset)) }
+        if offset > 0 { progress.resumed(offset) }
         if !(offset > 0 && offset == size) {
-            try await provider.upload(source, to: target, resumingAt: offset) { report(.bytes(base + $0)) }
+            try await provider.upload(source, to: target, resumingAt: offset, progress: progress.bytes)
         }
         guard !direct else {
             ledger.markDone(key, size: size)
@@ -267,8 +265,8 @@ enum TransferRunner {
             if (error as? ProviderError)?.isInterruption == true { throw error }
             // Renommage refusé : on envoie directement, et on s'en souvient pour les fichiers suivants.
             UploadPolicy.markRenameRefused(connectionID)
-            report(.warning("envoi direct : ce serveur refuse le renommage"))
-            try await provider.upload(source, to: destination, resumingAt: 0) { report(.bytes(base + $0)) }
+            progress.report(.warning("envoi direct : ce serveur refuse le renommage"))
+            try await provider.upload(source, to: destination, resumingAt: 0, progress: progress.bytes)
             Task.detached(priority: .utility) { try? await provider.delete(RemoteFile(name: target.name, path: target, kind: .file)) }
         }
         ledger.markDone(key, size: size)
@@ -292,6 +290,29 @@ enum TransferRunner {
         } catch {
             if error is CancellationError || (error as? ProviderError)?.isInterruption == true { throw error }
             return nil
+        }
+    }
+
+    // MARK: Fichiers en parallèle
+
+    /// Passe `files` à `width` à la fois, chacun avec son rang. Un serveur qui refuse une connexion de plus ne fait
+    /// pas échouer le transfert : le fichier retourne dans la file et on continue avec un ouvrier de moins.
+    private static func forEach<File: Sendable>(_ files: [File], width: Int, _ body: @escaping @Sendable (Int, File) async throws -> Void) async throws {
+        let line = WorkLine(count: files.count, workers: max(1, min(width, files.count)))
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<line.workers {
+                group.addTask {
+                    while let index = line.next() {
+                        try Task.checkCancellation()
+                        do {
+                            try await body(index, files[index])
+                        } catch ProviderError.connectionLimit where line.giveBack(index) {
+                            return
+                        }
+                    }
+                }
+            }
+            try await group.waitForAll()
         }
     }
 
@@ -329,4 +350,80 @@ enum TransferRunner {
         folders.sort { $0.split(separator: "/").count < $1.split(separator: "/").count }
         return (folders, files)
     }
+}
+
+/// Les rangs de fichiers qui restent à passer, et les ouvriers encore au travail.
+private final class WorkLine: @unchecked Sendable {
+    let workers: Int
+    private let lock = NSLock()
+    private var upcoming: Int = 0
+    private let count: Int
+    private var returned: [Int] = []
+    private var active: Int
+
+    init(count: Int, workers: Int) {
+        self.count = count
+        self.workers = workers
+        self.active = workers
+    }
+
+    /// Le prochain rang ; `nil` : plus rien, l'ouvrier s'arrête.
+    func next() -> Int? {
+        lock.withLock {
+            if let index = returned.popLast() { return index }
+            guard upcoming < count else {
+                active -= 1
+                return nil
+            }
+            defer { upcoming += 1 }
+            return upcoming
+        }
+    }
+
+    /// Rend un fichier refusé faute de connexion, et retire son ouvrier. Impossible pour le dernier :
+    /// personne ne le reprendrait, l'erreur doit remonter.
+    func giveBack(_ index: Int) -> Bool {
+        lock.withLock {
+            guard active > 1 else { return false }
+            active -= 1
+            returned.append(index)
+            return true
+        }
+    }
+}
+
+/// Octets d'un transfert : fichiers terminés, plus l'avancée de chacun de ceux en vol.
+final class ByteTally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var settled: Int64
+    private var inFlight: [Int: Int64] = [:]
+
+    init(settled: Int64 = 0) { self.settled = settled }
+
+    /// Le fichier `slot` en est à `bytes` depuis son début. Renvoie le total.
+    func update(_ slot: Int, to bytes: Int64) -> Int64 {
+        lock.withLock {
+            inFlight[slot] = bytes
+            return settled + inFlight.values.reduce(0, +)
+        }
+    }
+
+    /// Le fichier `slot` est terminé et pèse `bytes`. Renvoie le total.
+    func settle(_ slot: Int, _ bytes: Int64) -> Int64 {
+        lock.withLock {
+            inFlight[slot] = nil
+            settled += bytes
+            return settled + inFlight.values.reduce(0, +)
+        }
+    }
+}
+
+/// Avancée d'un fichier, ramenée au total du transfert dont il fait partie.
+struct FileProgress: Sendable {
+    let report: TransferReport
+    var tally = ByteTally()
+    var slot = 0
+
+    @Sendable func bytes(_ bytes: Int64) { report(.bytes(tally.update(slot, to: bytes))) }
+    func resumed(_ bytes: Int64) { report(.resumed(bytes: tally.update(slot, to: bytes))) }
 }

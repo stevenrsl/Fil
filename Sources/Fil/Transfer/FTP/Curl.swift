@@ -27,6 +27,11 @@ final class CurlTransfer {
         self.progress = progress
         self.cancellation = cancellation
     }
+
+    /// Erreur d'un appel `read` ou `write` sur le fichier local, dans la forme que `ReadableError` traduit.
+    static func fileError(_ code: Int32) -> Error {
+        code == ENOSPC ? CocoaError(.fileWriteOutOfSpace) : POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+    }
 }
 
 /// Échec brut de libcurl, traduit plus haut en phrase lisible.
@@ -115,14 +120,20 @@ final class CurlHandle {
             guard let buffer, let context else { return 0 }
             let transfer = Unmanaged<CurlTransfer>.fromOpaque(context).takeUnretainedValue()
             let length = size * count
-            let chunk = Data(bytes: buffer, count: length)
-            if let output = transfer.output {
-                do { try output.write(contentsOf: chunk) } catch {
-                    transfer.localError = error
+            guard let output = transfer.output else {
+                transfer.received.append(UnsafeRawPointer(buffer).assumingMemoryBound(to: UInt8.self), count: length)
+                return length
+            }
+            // Directement depuis le tampon de libcurl : ni copie ni allocation par bloc.
+            var written = 0
+            while written < length {
+                let result = Darwin.write(output.fileDescriptor, buffer + written, length - written)
+                if result < 0 {
+                    if errno == EINTR { continue }
+                    transfer.localError = CurlTransfer.fileError(errno)
                     return 0
                 }
-            } else {
-                transfer.received.append(chunk)
+                written += result
             }
             return length
         }
@@ -131,14 +142,12 @@ final class CurlHandle {
             fil_curl_set_data_callback(raw, CURLOPT_READFUNCTION) { buffer, size, count, context in
                 guard let buffer, let context else { return Int(CURL_READFUNC_ABORT) }
                 let transfer = Unmanaged<CurlTransfer>.fromOpaque(context).takeUnretainedValue()
-                do {
-                    guard let data = try transfer.input?.read(upToCount: size * count), !data.isEmpty else { return 0 }
-                    data.withUnsafeBytes { bytes in
-                        buffer.update(from: bytes.bindMemory(to: CChar.self).baseAddress!, count: data.count)
-                    }
-                    return data.count
-                } catch {
-                    transfer.localError = error
+                guard let input = transfer.input else { return 0 }
+                while true {
+                    let result = Darwin.read(input.fileDescriptor, buffer, size * count)
+                    if result >= 0 { return result }
+                    if errno == EINTR { continue }
+                    transfer.localError = CurlTransfer.fileError(errno)
                     return Int(CURL_READFUNC_ABORT)
                 }
             }

@@ -159,7 +159,8 @@ struct ThinProgress: View {
                 if let fraction {
                     Capsule().fill(Palette.accentInk).frame(width: max(3, geometry.size.width * fraction))
                 } else {
-                    TimelineView(.animation) { context in
+                    // Trente images par seconde suffisent à une barre qui respire en 1,6 s.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                         let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
                         Capsule().fill(Palette.accentInk.opacity(0.6))
                             .frame(width: geometry.size.width * 0.25)

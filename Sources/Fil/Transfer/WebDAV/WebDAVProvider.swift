@@ -91,6 +91,9 @@ final class WebDAVProvider: RemoteFileProvider {
     /// Un PUT repart toujours du début : le protocole n'a pas d'envoi reprenable.
     var canResumeUploads: Bool { false }
 
+    /// Autant que de connexions par serveur (`httpMaximumConnectionsPerHost`).
+    var parallelFiles: Int { 4 }
+
     func download(_ file: RemoteFile, to destination: URL, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
         var start = offset
         while true {
