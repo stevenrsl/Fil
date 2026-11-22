@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024">
+  <title>Fil · piste C, f de nuit (iOS)</title>
+  <!-- Variante iOS : carré plein bord à bord, iOS applique lui-même le masque et l'ombre. -->
+  <defs>
+    <clipPath id="clip"><rect x="100" y="100" width="824" height="824"/></clipPath>
+    <linearGradient id="bgC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25324A"/>
+      <stop offset="1" stop-color="#121A26"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgC)"/>
+    <path d="M 650 292 C 600 236, 470 240, 452 350 L 452 770" fill="none" stroke="#ABC9F0" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 330 478 L 560 478 C 680 478, 760 520, 1000 470" fill="none" stroke="#9CCCFF" stroke-width="30" stroke-linecap="round"/>
+  </g>
+</svg>

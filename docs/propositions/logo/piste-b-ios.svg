@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024">
+  <title>Fil · piste B, Deux rives (iOS)</title>
+  <!-- Variante iOS : carré plein bord à bord, iOS applique lui-même le masque et l'ombre. -->
+  <defs>
+    <clipPath id="clip"><rect x="100" y="100" width="824" height="824"/></clipPath>
+    <linearGradient id="bgB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7FAFE"/>
+      <stop offset="1" stop-color="#E4ECF8"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgB)"/>
+    <path d="M 340 640 C 560 640, 480 384, 700 384" fill="none" stroke="#3866B3" stroke-width="34" stroke-linecap="round"/>
+    <circle cx="340" cy="640" r="118" fill="#1C2636"/>
+    <circle cx="700" cy="384" r="84" fill="#3866B3"/>
+    <circle cx="700" cy="384" r="36" fill="#FAFCFF"/>
+  </g>
+</svg>

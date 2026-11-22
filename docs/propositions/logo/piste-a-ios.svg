@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024">
+  <title>Fil · piste A, Fil d'Ariane (iOS)</title>
+  <!-- Variante iOS : carré plein bord à bord, iOS applique lui-même le masque et l'ombre. -->
+  <defs>
+    <clipPath id="clip"><rect x="100" y="100" width="824" height="824"/></clipPath>
+    <linearGradient id="bgA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7FAFE"/>
+      <stop offset="1" stop-color="#DFE9F7"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgA)"/>
+    <path d="M 30 724 C 250 724, 384 690, 466 590 C 556 480, 616 300, 520 270 C 410 236, 384 440, 512 530 C 624 608, 790 540, 1000 410" fill="none" stroke="#3866B3" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="100 100 824 824" width="1024" height="1024">
+  <title>Fil · piste D, Bobine épurée (iOS)</title>
+  <!-- Variante iOS : carré plein bord à bord, iOS applique lui-même le masque et l'ombre. -->
+  <defs>
+    <clipPath id="clip"><rect x="100" y="100" width="824" height="824"/></clipPath>
+    <linearGradient id="bgD" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7FAFE"/>
+      <stop offset="1" stop-color="#E1EAF7"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bgD)"/>
+    <path d="M 600 620 C 700 620, 720 700, 820 700 C 900 700, 940 660, 1000 640" fill="none" stroke="#3866B3" stroke-width="30" stroke-linecap="round"/>
+    <rect x="384" y="350" width="256" height="340" fill="#3866B3"/>
+    <g stroke="#ABC9F0" stroke-width="12" stroke-linecap="round">
+      <line x1="404" y1="452" x2="620" y2="452"/>
+      <line x1="404" y1="520" x2="620" y2="520"/>
+      <line x1="404" y1="588" x2="620" y2="588"/>
+    </g>
+    <rect x="300" y="290" width="424" height="84" rx="42" fill="#1C2636"/>
+    <rect x="300" y="666" width="424" height="84" rx="42" fill="#1C2636"/>
+  </g>
+</svg>
