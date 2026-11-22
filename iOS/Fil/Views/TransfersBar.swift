@@ -145,7 +145,7 @@ struct TransferRow: View {
 
     private var tint: Color {
         if isFailure { return Palette.alert }
-        return item.state == .done ? Palette.accentInk : Palette.inkSoft
+        return item.state == .done ? Palette.success : Palette.inkSoft
     }
 
     @ViewBuilder

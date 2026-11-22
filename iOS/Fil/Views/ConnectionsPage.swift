@@ -25,6 +25,17 @@ struct ConnectionsPage: View {
                     ConnectionPage(model: model, id: id)
                 }
                 .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Menu {
+                            Picker("Apparence", selection: $model.theme) {
+                                ForEach(ThemeID.allCases, id: \.self) { theme in
+                                    Text(theme.label).tag(theme)
+                                }
+                            }
+                        } label: {
+                            Label("Apparence", systemImage: "circle.lefthalf.filled")
+                        }
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             add()

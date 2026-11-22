@@ -52,6 +52,7 @@ struct ConnectionStore {
 struct Preferences {
     private static let downloadFolderKey = "fil.downloadFolder"
     private static let editorKey = "fil.editor"
+    private static let themeKey = "fil.theme"
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -62,6 +63,12 @@ struct Preferences {
     var editorURL: URL? {
         get { defaults.string(forKey: Self.editorKey).map { URL(fileURLWithPath: $0) } }
         nonmutating set { defaults.set(newValue?.path, forKey: Self.editorKey) }
+    }
+
+    /// Le mode graphique. Une valeur inconnue (mode retiré) retombe sur Défaut.
+    var theme: ThemeID {
+        get { defaults.string(forKey: Self.themeKey).flatMap(ThemeID.init(rawValue:)) ?? .defaut }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.themeKey) }
     }
 
     var downloadFolder: URL {

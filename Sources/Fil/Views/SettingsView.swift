@@ -5,7 +5,12 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @Bindable var model: AppModel
 
+    /// Changer de mode reconstruit la page : les couleurs sont relues, l'état vit dans le modèle.
     var body: some View {
+        content.id(model.theme)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: Spacing.regular) {
             Text("Téléchargements")
                 .font(TypeScale.section)
@@ -50,6 +55,17 @@ struct SettingsView: View {
                     .buttonStyle(QuietButtonStyle())
             }
             Text("« Modifier » ouvre le fichier distant dans cet éditeur et renvoie chaque enregistrement au serveur. Sans choix, Fil prend l'application de macOS pour ce fichier, ou ton éditeur de texte si c'est un navigateur.")
+                .font(TypeScale.label)
+                .foregroundStyle(Palette.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Palette.hairline).padding(.vertical, Spacing.tight)
+
+            Text("Apparence")
+                .font(TypeScale.section)
+                .foregroundStyle(Palette.ink)
+            ThemePicker(selection: $model.theme)
+            Text("\(model.theme.label) : \(model.theme.summary) Chaque mode suit le clair et le sombre de macOS.")
                 .font(TypeScale.label)
                 .foregroundStyle(Palette.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)

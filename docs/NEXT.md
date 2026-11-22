@@ -66,6 +66,8 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 
 ## Application
 
+- **Modes graphiques : vérifier à l'écran.** Défaut, Veilleuse et Net (2026-11-22) sont couverts par les tests de contraste et de persistance, pas regardés : bascule depuis les réglages pendant un transfert, ligne choisie du tableau, contrôles natifs (`Picker`, cases) qui gardent peut-être l'accent de macOS, menu « Apparence » sur iOS.
+- **Autres modes** proposés dans `docs/propositions/themes/` (Ardoise, Lin, Mousse, Prune) et un « Défaut AA » qui lèverait les quatre écarts connus de Défaut en clair : décision de DA à prendre.
 - **Préférences séparées** : `swift run Fil` lit le domaine `Fil`, `Fil.app` lit `com.fil.app`. Les favoris ne sont donc pas partagés entre les deux. À unifier quand l'identifiant définitif sera choisi.
 - **Identifiant de bundle définitif** (provisoire : `com.fil.app`). Décision à prendre avant la première distribution : le changer fait perdre les préférences (domaine `com.fil.app`) ; le service Keychain `com.fil.connections` est indépendant et ne bouge pas.
 - **Signature Developer ID et notarisation** : `Tools/release.sh` est écrit mais jamais exécuté de bout en bout. Il faut une identité « Developer ID Application » et un profil `notarytool` (voir `Support/DISTRIBUTION.md`).

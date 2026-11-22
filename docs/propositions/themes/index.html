@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fil · modes graphiques</title>
+<style>
+  /* Habillage de la page de proposition (pas un thème de Fil). */
+  :root {
+    --page-bg: #F4F4F3; --page-ink: #1C1C1E; --page-soft: #5A5A60; --page-line: #D9D9DC; --page-card: #FFFFFF; --page-chip: #EAEAEC;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page-bg: #111113; --page-ink: #EDEDEF; --page-soft: #A4A4AC; --page-line: #2E2E33; --page-card: #1A1A1D; --page-chip: #26262A;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page-bg: #111113; --page-ink: #EDEDEF; --page-soft: #A4A4AC; --page-line: #2E2E33; --page-card: #1A1A1D; --page-chip: #26262A;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page-bg); color: var(--page-ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font: 400 34px/1.1 ui-serif, "New York", Georgia, serif; margin: 0 0 6px; }
+  .lede { font: italic 17px/1.4 ui-serif, "New York", Georgia, serif; color: var(--page-soft); margin: 0 0 24px; max-width: 70ch; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-bottom: 18px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--page-line); background: var(--page-card);
+    color: var(--page-ink); border-radius: 999px; padding: 6px 12px 6px 8px; font: inherit; cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { border-color: var(--page-ink); box-shadow: inset 0 0 0 1px var(--page-ink); }
+  .chip .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; grid-template-columns: 1fr 1fr; overflow: hidden; border: 1px solid rgba(127,127,127,.35); }
+  .seg { display: inline-flex; background: var(--page-chip); border-radius: 8px; padding: 2px; }
+  .seg button { font: inherit; border: 0; background: transparent; color: var(--page-soft); padding: 5px 12px; border-radius: 6px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--page-card); color: var(--page-ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .intent { margin: 0 0 18px; max-width: 75ch; }
+  .intent b { font: 400 22px ui-serif, "New York", Georgia, serif; margin-right: 8px; }
+  .intent span { color: var(--page-soft); }
+  .stage { display: grid; gap: 20px; }
+  .stage.both { grid-template-columns: 1fr; }
+  @media (min-width: 1900px) { .stage.both { grid-template-columns: 1fr 1fr; } }
+  .frame { overflow-x: auto; padding-bottom: 6px; }
+  .frame h3 { font-size: 12px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--page-soft); margin: 0 0 8px; }
+  h2 { font: 400 22px ui-serif, "New York", Georgia, serif; margin: 36px 0 12px; }
+  .tokens { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .tok { background: var(--page-card); border: 1px solid var(--page-line); border-radius: 10px; overflow: hidden; font-size: 12px; }
+  .tok .sw { display: grid; grid-template-columns: 1fr 1fr; height: 38px; }
+  .tok .meta { padding: 6px 8px; }
+  .tok code { font: 11px ui-monospace, Menlo, monospace; color: var(--page-soft); }
+  table.ct { border-collapse: collapse; width: 100%; background: var(--page-card); border: 1px solid var(--page-line); border-radius: 10px; overflow: hidden; font-size: 13px; }
+  .ct th, .ct td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--page-line); }
+  .ct th { font-weight: 500; color: var(--page-soft); }
+  .ct td.n { font: 12px ui-monospace, Menlo, monospace; text-align: right; white-space: nowrap; }
+  .ct td.bad { color: #C0392B; font-weight: 600; }
+  .ct .pill { display: inline-block; width: 1.6em; text-align: center; border-radius: 4px; margin-right: 4px; font: 600 11px/1.6 -apple-system, sans-serif; }
+  .tablewrap { overflow-x: auto; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .thumb { border: 0; padding: 0; background: none; cursor: pointer; text-align: left; color: var(--page-ink); font: inherit; }
+  .thumb .clip { height: 176px; overflow: hidden; border-radius: 10px; border: 1px solid var(--page-line); display: grid; grid-template-columns: 1fr 1fr; }
+  .thumb .clip > div { overflow: hidden; position: relative; }
+  .thumb .clip .win { transform: scale(.26); transform-origin: 0 0; position: absolute; left: 0; top: 0; pointer-events: none; }
+  .thumb b { display: block; margin-top: 6px; font-weight: 500; }
+  .thumb small { color: var(--page-soft); }
+  .note { color: var(--page-soft); font-size: 13px; max-width: 80ch; }
+
+  /* ───────────── Maquette de Fil : ne lit que les jetons du mode (--ground, --ink…). ───────────── */
+  .win {
+    width: 1000px; height: 640px; border-radius: 12px; overflow: hidden; background: var(--ground); color: var(--ink);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.18), 0 18px 40px rgba(0,0,0,.18); display: flex; flex-direction: column;
+    font: 13.5px/1.3 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  .win .tbar { height: 28px; flex: none; background: var(--groundSunk); display: flex; align-items: center; padding-left: 12px; gap: 8px; }
+  .win .tbar i { width: 12px; height: 12px; border-radius: 50%; background: var(--hairline); display: block; }
+  .win .body { flex: 1; display: flex; min-height: 0; }
+  .win aside { width: 210px; flex: none; background: var(--groundSunk); border-right: 1px solid var(--hairline); padding: 10px 8px 18px; display: flex; flex-direction: column; gap: 2px; }
+  .win .sect { font-size: 12.5px; color: var(--inkFaint); padding: 0 10px 4px; }
+  .win .sect + .row { margin-top: 0; }
+  .win .row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; }
+  .win .row.sel { background: var(--surface); }
+  .win .badge { width: 20px; height: 20px; border-radius: 6px; flex: none; display: grid; place-items: center; font: 700 11px ui-rounded, -apple-system, sans-serif; background: var(--accentWash); color: var(--accentInk); }
+  .win .badge.on { background: var(--accent); color: var(--onAccent); }
+  .win .rname { font-size: 13.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .win .rsub { font-size: 11.5px; color: var(--inkFaint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .win .rsub.open { color: var(--accentInk); }
+  .win .rsub.caution { color: var(--caution); }
+  .win .kbd { margin-left: auto; font-size: 11.5px; color: var(--inkFaint); }
+  .win .add { margin-top: auto; padding: 0 10px; font-size: 12.5px; color: var(--accentInk); display: flex; gap: 6px; align-items: center; }
+  .win main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .win .page { flex: 1; padding: 24px 30px 16px; display: flex; flex-direction: column; min-height: 0; }
+  .win .trail { display: flex; gap: 4px; font-size: 12.5px; color: var(--inkSoft); align-items: baseline; }
+  .win .trail .cur { color: var(--ink); }
+  .win .trail .sep { color: var(--inkFaint); }
+  .win .trail .close { margin-left: auto; color: var(--accentInk); }
+  .win .title { font: 400 30px/1.15 ui-serif, "New York", Georgia, serif; color: var(--ink); margin-top: 8px; }
+  .win .tools { display: flex; align-items: center; gap: 2px; margin-top: 14px; }
+  .win .tool { display: inline-flex; gap: 5px; align-items: center; font-size: 12.5px; color: var(--inkSoft); padding: 5px 8px; border-radius: 6px; }
+  .win .tool.hover { background: var(--groundSunk); }
+  .win .filter { margin-left: auto; width: 200px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; padding: 6px 10px; font-size: 13.5px; color: var(--inkFaint); }
+  .win .offer { margin-top: 8px; background: var(--accentWash); color: var(--accentInk); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; display: flex; gap: 14px; align-items: baseline; }
+  .win .offer u { margin-left: auto; }
+  .win .offer .soft { color: var(--inkSoft); }
+  .win .list { margin-top: 8px; flex: 1; background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px; padding: 6px 6px; overflow: hidden; }
+  .win .lh, .win .lr { display: grid; grid-template-columns: 1fr 90px 150px; gap: 8px; align-items: center; padding: 0 10px; }
+  .win .lh { font-size: 11.5px; color: var(--inkSoft); height: 26px; border-bottom: 1px solid var(--hairline); margin-bottom: 4px; }
+  .win .lr { height: 26px; border-radius: 6px; margin-bottom: 2px; }
+  .win .lr.sel { background: var(--selection); }
+  .win .lr .nm { display: flex; gap: 8px; align-items: center; color: var(--ink); white-space: nowrap; }
+  .win .lr .nm svg { color: var(--accentInk); flex: none; }
+  .win .lr .sz { font: 12px ui-monospace, Menlo, monospace; color: var(--inkFaint); }
+  .win .lr .dt { font-size: 12.5px; color: var(--inkFaint); }
+  .win .foot { display: flex; align-items: center; margin-top: 8px; gap: 14px; }
+  .win .foot .note2 { font-size: 12.5px; color: var(--inkFaint); }
+  .win .cta { margin-left: auto; background: var(--accent); color: var(--onAccent); font: 500 14px -apple-system, sans-serif; border-radius: 999px; padding: 0 18px; height: 36px; display: inline-flex; align-items: center; }
+  .win .tray { flex: none; background: var(--surface); border-top: 1px solid var(--hairline); padding: 10px 30px 12px; }
+  .win .th { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; }
+  .win .th b { font-weight: 500; color: var(--ink); font-size: 13.5px; }
+  .win .th span { color: var(--inkSoft); }
+  .win .th u { margin-left: auto; color: var(--accentInk); text-decoration: none; }
+  .win .tr { display: grid; grid-template-columns: 220px 1fr auto; gap: 14px; align-items: center; margin-top: 8px; }
+  .win .tr .n { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .win .tr .c { font-size: 11.5px; color: var(--inkFaint); }
+  .win .tr .ph { font-size: 12.5px; color: var(--inkSoft); }
+  .win .tr .ph.ok { color: var(--success); }
+  .win .tr .ph.err { color: var(--alert); }
+  .win .bar { height: 3px; border-radius: 3px; background: var(--hairline); margin-top: 5px; overflow: hidden; }
+  .win .bar i { display: block; height: 100%; width: 47%; background: var(--progress); border-radius: 3px; }
+  .win .tr .acts { display: flex; gap: 10px; font-size: 12.5px; color: var(--inkSoft); }
+  .win .tr .acts .link { color: var(--accentInk); }
+  .win .alertb { background: var(--alertWash); color: var(--alert); border-radius: 10px; padding: 3px 10px; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Modes graphiques de Fil</h1>
+  <p class="lede">Sept ambiances pour l'écran principal, chacune en clair et en sombre. La maquette ne lit que les jetons du mode choisi : ce qu'on voit ici est ce que changerait un <code>Theme</code> dans <code>Sources/Fil/Design/</code>.</p>
+
+  <div class="controls">
+    <div class="chips" id="chips" role="group" aria-label="Mode"></div>
+    <div class="seg" id="scheme" role="group" aria-label="Apparence">
+      <button data-s="light">Clair</button><button data-s="dark">Sombre</button><button data-s="both" aria-pressed="true">Les deux</button>
+    </div>
+  </div>
+
+  <p class="intent" id="intent"></p>
+  <div class="stage" id="stage"></div>
+
+  <h2>Jetons</h2>
+  <p class="note">Chaque pastille : à gauche la valeur claire, à droite la sombre. <code>success</code>, <code>progress</code> et <code>selection</code> sont nouveaux ; dans Défaut ils reprennent ce que font les vues aujourd'hui (<code>accentInk</code>, <code>accentWash</code>).</p>
+  <div class="tokens" id="tokens"></div>
+
+  <h2>Contrastes WCAG</h2>
+  <p class="note">Calculés ici, dans la page, par la même formule que <code>contrastes.py</code> (luminance relative sRGB). Seuil 4,5 pour le texte (1.4.3 AA), 3 pour les éléments graphiques (1.4.11). Les cases en rouge échouent.</p>
+  <div class="tablewrap"><table class="ct" id="contrast"></table></div>
+
+  <h2>Tous les modes</h2>
+  <div class="gallery" id="gallery"></div>
+</div>
+
+<script id="themes" type="application/json">
+[
+ {
+  "id": "defaut",
+  "name": "Défaut",
+  "tag": "Ciel pâle",
+  "intent": "La palette livrée aujourd'hui : bleu poudre, encre ardoise, très peu de contraste de masse. Calme, technique, sans effet.",
+  "light": {
+   "ground": "#EBF0F7",
+   "groundSunk": "#DBE6F2",
+   "surface": "#FAFCFF",
+   "ink": "#1C2636",
+   "inkSoft": "#54637A",
+   "inkFaint": "#6E7D96",
+   "hairline": "#C7D4E8",
+   "accent": "#ABC9F0",
+   "onAccent": "#1A335C",
+   "accentWash": "#D9E8FA",
+   "accentInk": "#3866B2",
+   "alert": "#99453B",
+   "alertWash": "#F7E8E3",
+   "caution": "#8C6B29",
+   "success": "#3866B2",
+   "progress": "#3866B2",
+   "selection": "#D9E8FA"
+  },
+  "dark": {
+   "ground": "#121A26",
+   "groundSunk": "#0D141F",
+   "surface": "#1C2636",
+   "ink": "#EBF2FF",
+   "inkSoft": "#BAC7DE",
+   "inkFaint": "#9EB0C9",
+   "hairline": "#334561",
+   "accent": "#82ADE6",
+   "onAccent": "#12213D",
+   "accentWash": "#263854",
+   "accentInk": "#9CCCFF",
+   "alert": "#ED9485",
+   "alertWash": "#3D2121",
+   "caution": "#E6C273",
+   "success": "#9CCCFF",
+   "progress": "#9CCCFF",
+   "selection": "#263854"
+  }
+ },
+ {
+  "id": "veilleuse",
+  "name": "Veilleuse",
+  "tag": "Ambre de nuit",
+  "intent": "Pour 3 h du matin au sens propre : peu de bleu, une lumière d'ambre basse, un noir chaud qui ne fait pas cligner. Le clair est un papier crème sous une lampe.",
+  "light": {
+   "ground": "#F4EEE3",
+   "groundSunk": "#EAE1D1",
+   "surface": "#FBF8F2",
+   "ink": "#2A2118",
+   "inkSoft": "#5C4E3E",
+   "inkFaint": "#6F604C",
+   "hairline": "#DDD2BF",
+   "accent": "#B87A1E",
+   "onAccent": "#1F1405",
+   "accentWash": "#F5E4C3",
+   "accentInk": "#87560F",
+   "alert": "#9B3B2A",
+   "alertWash": "#F6E0D8",
+   "caution": "#6A621A",
+   "success": "#4A6627",
+   "progress": "#98600F",
+   "selection": "#F0DDB6"
+  },
+  "dark": {
+   "ground": "#15110C",
+   "groundSunk": "#0F0C08",
+   "surface": "#1E1912",
+   "ink": "#EDE2D0",
+   "inkSoft": "#C4B59D",
+   "inkFaint": "#A69680",
+   "hairline": "#3A3125",
+   "accent": "#D9A04A",
+   "onAccent": "#24170A",
+   "accentWash": "#3A2A14",
+   "accentInk": "#E8B866",
+   "alert": "#E8907E",
+   "alertWash": "#3A1C16",
+   "caution": "#C9C06A",
+   "success": "#A9C27F",
+   "progress": "#D9A04A",
+   "selection": "#3E2F18"
+  }
+ },
+ {
+  "id": "ardoise",
+  "name": "Ardoise",
+  "tag": "Graphite",
+  "intent": "Presque monochrome : du gris, de l'encre, et un bouton principal noir sur blanc (blanc sur noir la nuit). Rien ne colore l'écran que les états.",
+  "light": {
+   "ground": "#EFEFEE",
+   "groundSunk": "#E4E4E2",
+   "surface": "#FAFAF9",
+   "ink": "#1B1C1E",
+   "inkSoft": "#4A4C50",
+   "inkFaint": "#5F6267",
+   "hairline": "#D3D4D6",
+   "accent": "#2B2D31",
+   "onAccent": "#F5F5F4",
+   "accentWash": "#E2E3E5",
+   "accentInk": "#2B2D31",
+   "alert": "#A3322A",
+   "alertWash": "#F5E2DF",
+   "caution": "#7A5A10",
+   "success": "#2F6B3E",
+   "progress": "#3C3F44",
+   "selection": "#DCDDE0"
+  },
+  "dark": {
+   "ground": "#141516",
+   "groundSunk": "#0E0F10",
+   "surface": "#1C1D1F",
+   "ink": "#ECECEA",
+   "inkSoft": "#B9BABD",
+   "inkFaint": "#9A9CA0",
+   "hairline": "#303235",
+   "accent": "#E4E4E1",
+   "onAccent": "#1A1B1D",
+   "accentWash": "#2C2E31",
+   "accentInk": "#E4E4E1",
+   "alert": "#F08C80",
+   "alertWash": "#3A1D1A",
+   "caution": "#E3C27A",
+   "success": "#8CCB98",
+   "progress": "#D4D5D2",
+   "selection": "#34373B"
+  }
+ },
+ {
+  "id": "lin",
+  "name": "Lin",
+  "tag": "Papier et terre cuite",
+  "intent": "Un carnet : papier écru, encre sépia, accent terre cuite. Chaleureux sans être sucré ; l'erreur passe au lie-de-vin pour ne pas se confondre avec l'accent.",
+  "light": {
+   "ground": "#F3EEE6",
+   "groundSunk": "#E9E2D6",
+   "surface": "#FCFAF6",
+   "ink": "#2B241E",
+   "inkSoft": "#5C5047",
+   "inkFaint": "#6E6157",
+   "hairline": "#DCD2C4",
+   "accent": "#A9522E",
+   "onAccent": "#FFF8F2",
+   "accentWash": "#F3DDD0",
+   "accentInk": "#94421F",
+   "alert": "#962638",
+   "alertWash": "#F6DFE2",
+   "caution": "#735810",
+   "success": "#476530",
+   "progress": "#A9522E",
+   "selection": "#F0DCCD"
+  },
+  "dark": {
+   "ground": "#1A1613",
+   "groundSunk": "#13100D",
+   "surface": "#231E1A",
+   "ink": "#EFE6DC",
+   "inkSoft": "#C7B9AA",
+   "inkFaint": "#A89A8B",
+   "hairline": "#3B332C",
+   "accent": "#E08A62",
+   "onAccent": "#2A140A",
+   "accentWash": "#3E261B",
+   "accentInk": "#EFA07C",
+   "alert": "#F08A98",
+   "alertWash": "#3C1A20",
+   "caution": "#E1C27A",
+   "success": "#A8C98C",
+   "progress": "#E08A62",
+   "selection": "#43291D"
+  }
+ },
+ {
+  "id": "mousse",
+  "name": "Mousse",
+  "tag": "Sous-bois",
+  "intent": "Le retour du pastel forêt d'origine, en plus franc : sauge, vert profond, ombre végétale. Repose les yeux sur de longues sessions.",
+  "light": {
+   "ground": "#EAF0EA",
+   "groundSunk": "#DEE7DF",
+   "surface": "#F8FBF8",
+   "ink": "#17241C",
+   "inkSoft": "#435448",
+   "inkFaint": "#55685B",
+   "hairline": "#CBD9CE",
+   "accent": "#3B7350",
+   "onAccent": "#F4FBF6",
+   "accentWash": "#D6E8DA",
+   "accentInk": "#2E6644",
+   "alert": "#A3392E",
+   "alertWash": "#F5E1DD",
+   "caution": "#765A10",
+   "success": "#2A6237",
+   "progress": "#3B7350",
+   "selection": "#D3E6D8"
+  },
+  "dark": {
+   "ground": "#0E1511",
+   "groundSunk": "#0A100C",
+   "surface": "#151F19",
+   "ink": "#E3EEE6",
+   "inkSoft": "#B2C4B7",
+   "inkFaint": "#93A898",
+   "hairline": "#26362C",
+   "accent": "#7FBF94",
+   "onAccent": "#0D2016",
+   "accentWash": "#1D3326",
+   "accentInk": "#92D3A7",
+   "alert": "#EE8F84",
+   "alertWash": "#3A1B18",
+   "caution": "#E2C47C",
+   "success": "#92D3A7",
+   "progress": "#7FBF94",
+   "selection": "#21392B"
+  }
+ },
+ {
+  "id": "prune",
+  "name": "Prune",
+  "tag": "Aubergine",
+  "intent": "Le mode à caractère : un violet sourd, des gris lavés de prune. Pour qui veut reconnaître Fil d'un coup d'œil parmi les fenêtres.",
+  "light": {
+   "ground": "#F1EDF2",
+   "groundSunk": "#E6E0E9",
+   "surface": "#FBF9FC",
+   "ink": "#241B29",
+   "inkSoft": "#54465B",
+   "inkFaint": "#66586E",
+   "hairline": "#D8CEDD",
+   "accent": "#6B3F7E",
+   "onAccent": "#FAF5FC",
+   "accentWash": "#E9DDEE",
+   "accentInk": "#6B3F7E",
+   "alert": "#A3302F",
+   "alertWash": "#F5E0DF",
+   "caution": "#765810",
+   "success": "#2F6A47",
+   "progress": "#7D4C91",
+   "selection": "#E5D7EC"
+  },
+  "dark": {
+   "ground": "#17121A",
+   "groundSunk": "#110D13",
+   "surface": "#201A24",
+   "ink": "#EEE6F1",
+   "inkSoft": "#C5B6CC",
+   "inkFaint": "#A797AF",
+   "hairline": "#382E3E",
+   "accent": "#C59ADB",
+   "onAccent": "#241330",
+   "accentWash": "#352641",
+   "accentInk": "#D4AEE6",
+   "alert": "#F08C86",
+   "alertWash": "#3B1B1C",
+   "caution": "#E3C47A",
+   "success": "#8DD0A6",
+   "progress": "#C59ADB",
+   "selection": "#3C2B48"
+  }
+ },
+ {
+  "id": "net",
+  "name": "Net",
+  "tag": "Contraste élevé",
+  "intent": "Pour les écrans fatigués, la lumière du jour, ou une vue qui baisse : noir, blanc, un bleu franc. Tout dépasse 7:1 sauf l'accent graphique.",
+  "light": {
+   "ground": "#FFFFFF",
+   "groundSunk": "#F0F0F0",
+   "surface": "#FFFFFF",
+   "ink": "#000000",
+   "inkSoft": "#262626",
+   "inkFaint": "#404040",
+   "hairline": "#A0A0A0",
+   "accent": "#0040B0",
+   "onAccent": "#FFFFFF",
+   "accentWash": "#DCE6FA",
+   "accentInk": "#0036A0",
+   "alert": "#990000",
+   "alertWash": "#FDE3E3",
+   "caution": "#6B4A00",
+   "success": "#00632A",
+   "progress": "#0040B0",
+   "selection": "#C9D8F7"
+  },
+  "dark": {
+   "ground": "#000000",
+   "groundSunk": "#0D0D0D",
+   "surface": "#0A0A0A",
+   "ink": "#FFFFFF",
+   "inkSoft": "#E0E0E0",
+   "inkFaint": "#C2C2C2",
+   "hairline": "#5A5A5A",
+   "accent": "#8DB8FF",
+   "onAccent": "#000000",
+   "accentWash": "#10264D",
+   "accentInk": "#A8C8FF",
+   "alert": "#FF8A80",
+   "alertWash": "#3D0A0A",
+   "caution": "#FFD36B",
+   "success": "#7FE0A0",
+   "progress": "#8DB8FF",
+   "selection": "#1F3A6B"
+  }
+ }
+]
+
+</script>
+<script>
+(() => {
+  const THEMES = JSON.parse(document.getElementById('themes').textContent);
+  const PAIRS = [
+    ['ink','ground',4.5,'texte sur fond'], ['ink','surface',4.5,'texte sur surface'], ['ink','groundSunk',4.5,'texte, barre latérale'],
+    ['inkSoft','ground',4.5,'texte doux sur fond'], ['inkSoft','surface',4.5,'texte doux sur surface'], ['inkSoft','groundSunk',4.5,'texte doux, barre latérale'],
+    ['inkFaint','surface',4.5,'tailles, dates'], ['inkFaint','groundSunk',4.5,'titres de section latéraux'],
+    ['accentInk','surface',4.5,'liens, icônes'], ['accentInk','groundSunk',4.5,'« Ajouter une connexion »'],
+    ['onAccent','accent',4.5,'libellé du bouton principal'], ['accentInk','accentWash',4.5,'bandeau de proposition, pastille inactive'], ['accent','ground',3,'bouton principal sur fond'],
+    ['alert','alertWash',4.5,"bandeau d'erreur"], ['alert','surface',4.5,'erreur sur surface'],
+    ['caution','surface',4.5,'attention (FTP en clair)'], ['success','surface',4.5,'succès'],
+    ['progress','surface',3,'barre de progression'], ['progress','hairline',3,'barre contre son rail'],
+    ['ink','selection',4.5,"nom d'une ligne choisie"], ['accentInk','selection',3,"icône d'une ligne choisie"],
+  ];
+  const lum = hex => {
+    const c = [1,3,5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map(v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const fr = n => n.toFixed(2).replace('.', ',');
+  const vars = values => Object.entries(values).map(([k, v]) => `--${k}:${v}`).join(';');
+
+  const icon = {
+    folder: '<svg width="16" height="14" viewBox="0 0 16 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M1.5 3.2c0-.7.5-1.2 1.2-1.2h3.2l1.5 1.6h5.9c.7 0 1.2.5 1.2 1.2v6.5c0 .7-.5 1.2-1.2 1.2H2.7c-.7 0-1.2-.5-1.2-1.2z"/></svg>',
+    doc: '<svg width="16" height="14" viewBox="0 0 16 14" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M4.5 1h4.8L12 3.7v8.6c0 .4-.3.7-.7.7H4.5c-.4 0-.7-.3-.7-.7V1.7c0-.4.3-.7.7-.7z"/><path d="M9.2 1v2.8H12"/></svg>',
+    up: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 10.5V1.8M2.5 5.2 6 1.8l3.5 3.4"/></svg>',
+    refresh: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M10.2 6a4.2 4.2 0 1 1-1.3-3"/><path d="M9.4 1v2.3H7.1"/></svg>',
+    plus: '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5.5 1v9M1 5.5h9"/></svg>',
+    send: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M6 8V1.5M3.5 3.8 6 1.4l2.5 2.4M2 6.5v3.3c0 .4.3.7.7.7h6.6c.4 0 .7-.3.7-.7V6.5"/></svg>',
+  };
+
+  const files = [
+    ['folder', 'assets', '—', 'hier, 22:14'],
+    ['folder', 'css', '—', 'hier, 22:14'],
+    ['doc', 'index.html', '12 Ko', "aujourd'hui, 02:51"],
+    ['doc', 'photo-equipe.jpg', '2,4 Mo', '18 nov. 2026, 10:02', true],
+    ['doc', 'robots.txt', '68 o', '3 oct. 2026, 09:40'],
+    ['doc', 'sitemap.xml', '4 Ko', '3 oct. 2026, 09:40'],
+  ];
+
+  function windowHTML(values) {
+    const rows = files.map(([ic, name, size, date, sel]) => `
+      <div class="lr${sel ? ' sel' : ''}"><span class="nm">${icon[ic]}${name}</span><span class="sz">${size}</span><span class="dt">${date}</span></div>`).join('');
+    return `<div class="win" style="${vars(values)}" aria-hidden="true">
+      <div class="tbar"><i></i><i></i><i></i></div>
+      <div class="body">
+        <aside>
+          <div class="sect">Favoris</div>
+          <div class="row sel"><span class="badge on">F</span><span style="min-width:0"><div class="rname">OVH · site</div><div class="rsub open">Ouverte</div></span><span class="kbd">⌘1</span></div>
+          <div class="row"><span class="badge">S</span><span style="min-width:0"><div class="rname">Serveur maison</div><div class="rsub">nas.local</div></span><span class="kbd">⌘2</span></div>
+          <div class="sect" style="margin-top:14px">Connexions</div>
+          <div class="row"><span class="badge">W</span><span style="min-width:0"><div class="rname">kDrive</div><div class="rsub">connect.drive.infomaniak.com</div></span></div>
+          <div class="row"><span class="badge">P</span><span style="min-width:0"><div class="rname">Proton Drive</div><div class="rsub">Proton Drive</div></span></div>
+          <div class="row"><span class="badge">F</span><span style="min-width:0"><div class="rname">Ancien hébergeur</div><div class="rsub caution">FTP non chiffré</div></span></div>
+          <div class="add">${icon.plus} Ajouter une connexion</div>
+        </aside>
+        <main>
+          <div class="page">
+            <div class="trail"><span>Fil ·</span><span>OVH · site</span><span class="sep">›</span><span class="cur">www</span><span class="close">Fermer la connexion</span></div>
+            <div class="title">www</div>
+            <div class="tools">
+              <span class="tool">${icon.up} Remonter</span><span class="tool">${icon.refresh} Actualiser</span>
+              <span class="tool hover">${icon.plus} Nouveau dossier</span><span class="tool">${icon.send} Envoyer…</span>
+              <span class="filter">Filtrer</span>
+            </div>
+            <div class="list"><div class="lh"><span>Nom</span><span>Taille</span><span>Modifié</span></div>${rows}</div>
+            <div class="foot"><span class="note2">6 éléments · 1 choisi, 2,4 Mo</span><span class="cta">Télécharger</span></div>
+          </div>
+          <div class="tray">
+            <div class="th"><b>Transferts</b><span>1 en cours · 14,2 Mo/s</span><u>Effacer les terminés</u></div>
+            <div class="tr"><span style="min-width:0"><div class="n">site-2026-11.zip</div><div class="c">OVH · site</div></span>
+              <span><div class="ph">Envoi : 148 Mo sur 312 Mo, environ 12 s</div><div class="bar"><i></i></div></span>
+              <span class="acts"><span>Annuler</span></span></div>
+            <div class="tr"><span style="min-width:0"><div class="n">photo-equipe.jpg</div><div class="c">OVH · site</div></span>
+              <span class="ph ok">Téléchargé dans Téléchargements</span>
+              <span class="acts"><span class="link">Afficher</span></span></div>
+            <div class="tr"><span style="min-width:0"><div class="n">sauvegarde.sql</div><div class="c">Serveur maison</div></span>
+              <span><span class="alertb">Le serveur a fermé la connexion. Rien n'est perdu.</span></span>
+              <span class="acts"><span class="link">Réessayer</span></span></div>
+          </div>
+        </main>
+      </div>
+    </div>`;
+  }
+
+  let current = THEMES[0].id;
+  let scheme = 'both';
+  try { const saved = JSON.parse(localStorage.getItem('fil-themes') || '{}'); if (THEMES.some(t => t.id === saved.t)) current = saved.t; if (saved.s) scheme = saved.s; } catch (e) {}
+  const save = () => { try { localStorage.setItem('fil-themes', JSON.stringify({ t: current, s: scheme })); } catch (e) {} };
+
+  const chips = document.getElementById('chips');
+  THEMES.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.dataset.id = t.id;
+    b.innerHTML = `<span class="dot"><span style="background:${t.light.accent}"></span><span style="background:${t.dark.ground}"></span></span>${t.name}`;
+    b.onclick = () => { current = t.id; save(); render(); };
+    chips.appendChild(b);
+  });
+  document.querySelectorAll('#scheme button').forEach(b => b.onclick = () => { scheme = b.dataset.s; save(); render(); });
+
+  function render() {
+    const t = THEMES.find(x => x.id === current);
+    chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.id === current));
+    document.querySelectorAll('#scheme button').forEach(b => b.setAttribute('aria-pressed', b.dataset.s === scheme));
+    document.getElementById('intent').innerHTML = `<b>${t.name}</b><span>${t.tag}. </span>${t.intent}`;
+    const stage = document.getElementById('stage');
+    const shown = scheme === 'both' ? ['light', 'dark'] : [scheme];
+    stage.className = 'stage' + (scheme === 'both' ? ' both' : '');
+    stage.innerHTML = shown.map(s => `<div class="frame"><h3>${t.name} · ${s === 'light' ? 'clair' : 'sombre'}</h3>${windowHTML(t[s])}</div>`).join('');
+
+    document.getElementById('tokens').innerHTML = Object.keys(t.light).map(k => `
+      <div class="tok"><div class="sw"><span style="background:${t.light[k]}"></span><span style="background:${t.dark[k]}"></span></div>
+      <div class="meta">${k}<br><code>${t.light[k]} · ${t.dark[k]}</code></div></div>`).join('');
+
+    const cell = (fg, bg, th, values) => {
+      const r = ratio(values[fg], values[bg]);
+      return `<td class="n${r < th ? ' bad' : ''}"><span class="pill" style="background:${values[bg]};color:${values[fg]}">Aa</span>${fr(r)}</td>`;
+    };
+    document.getElementById('contrast').innerHTML =
+      '<tr><th>Paire</th><th>Rôle</th><th>Seuil</th><th>Clair</th><th>Sombre</th></tr>' +
+      PAIRS.map(([fg, bg, th, role]) => `<tr><td><code>${fg}</code> / <code>${bg}</code></td><td>${role}</td><td class="n">${fr(th).replace(',00', '')}</td>${cell(fg, bg, th, t.light)}${cell(fg, bg, th, t.dark)}</tr>`).join('');
+
+    const gallery = document.getElementById('gallery');
+    if (!gallery.childElementCount) {
+      gallery.innerHTML = THEMES.map(x => `<button class="thumb" data-id="${x.id}"><div class="clip"><div>${windowHTML(x.light)}</div><div>${windowHTML(x.dark)}</div></div><b>${x.name}</b><small>${x.tag}</small></button>`).join('');
+      gallery.querySelectorAll('.thumb').forEach(b => b.onclick = () => { current = b.dataset.id; save(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+    }
+  }
+  render();
+})();
+</script>
+</body>
+</html>

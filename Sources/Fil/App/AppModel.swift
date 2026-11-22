@@ -27,6 +27,13 @@ final class AppModel {
     var editorURL: URL? {
         didSet { preferences.editorURL = editorURL }
     }
+    /// Le mode graphique : les couleurs le lisent au dessin, la racine des vues se reconstruit quand il change.
+    var theme: ThemeID {
+        didSet {
+            preferences.theme = theme
+            ThemeSelection.current = theme
+        }
+    }
     let transfers: TransferQueue
     #if os(macOS)
     let edits: EditCoordinator
@@ -74,6 +81,8 @@ final class AppModel {
         self.lastUsedID = snapshot.lastUsedID
         self.downloadFolder = preferences.downloadFolder
         self.editorURL = preferences.editorURL
+        self.theme = preferences.theme
+        ThemeSelection.current = preferences.theme
         self.selectedConnectionID = snapshot.connections.first { $0.id == snapshot.lastUsedID }?.id ?? snapshot.connections.first?.id
         self.savedPasswordIDs = Set(snapshot.connections.map(\.id).filter(secrets.hasPassword))
         edits.purgeStaleFolders()
@@ -107,6 +116,8 @@ final class AppModel {
         self.lastUsedID = snapshot.lastUsedID
         self.downloadFolder = preferences.downloadFolder
         self.editorURL = preferences.editorURL
+        self.theme = preferences.theme
+        ThemeSelection.current = preferences.theme
         self.selectedConnectionID = snapshot.connections.first { $0.id == snapshot.lastUsedID }?.id ?? snapshot.connections.first?.id
         self.savedPasswordIDs = Set(snapshot.connections.map(\.id).filter(secrets.hasPassword))
     }

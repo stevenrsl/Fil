@@ -157,12 +157,12 @@ struct ThinProgress: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(Palette.hairline)
                 if let fraction {
-                    Capsule().fill(Palette.accentInk).frame(width: max(3, geometry.size.width * fraction))
+                    Capsule().fill(Palette.progress).frame(width: max(3, geometry.size.width * fraction))
                 } else {
                     // Trente images par seconde suffisent à une barre qui respire en 1,6 s.
                     TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                         let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                        Capsule().fill(Palette.accentInk.opacity(0.6))
+                        Capsule().fill(Palette.progress.opacity(0.6))
                             .frame(width: geometry.size.width * 0.25)
                             .offset(x: geometry.size.width * (phase * 1.25 - 0.25))
                     }
@@ -195,8 +195,49 @@ struct ProtocolBadge: View {
     var body: some View {
         Text(String(proto.label.prefix(1)))
             .font(TypeScale.badge)
-            .foregroundStyle(Palette.onAccent)
+            // Inactive, la lettre est à l'encre d'accent : `onAccent` sur `accentWash` ne se lit pas en sombre.
+            .foregroundStyle(isActive ? Palette.onAccent : Palette.accentInk)
             .frame(width: 20, height: 20)
             .background(isActive ? Palette.accent : Palette.accentWash, in: RoundedRectangle(cornerRadius: Radius.small))
+    }
+}
+
+/// Choix du mode graphique : une vignette par mode, dans ses propres couleurs. Le choix s'applique tout de suite.
+struct ThemePicker: View {
+    @Binding var selection: ThemeID
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Spacing.regular) {
+            ForEach(ThemeID.allCases, id: \.self) { theme in
+                Button { selection = theme } label: { swatch(theme) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Mode \(theme.label)")
+                    .accessibilityHint(theme.summary)
+                    .accessibilityAddTraits(theme == selection ? .isSelected : [])
+            }
+        }
+    }
+
+    private func swatch(_ theme: ThemeID) -> some View {
+        let isSelected = theme == selection
+        return VStack(alignment: .leading, spacing: Spacing.tight) {
+            VStack(alignment: .leading, spacing: 5) {
+                Capsule().fill(Palette.preview(\.ink, of: theme)).frame(width: 40, height: 4)
+                Capsule().fill(Palette.preview(\.inkFaint, of: theme)).frame(width: 28, height: 4)
+                Spacer(minLength: 0)
+                Capsule().fill(Palette.preview(\.accent, of: theme)).frame(width: 34, height: 10)
+            }
+            .padding(9)
+            .frame(width: 84, height: 56, alignment: .topLeading)
+            .background(Palette.preview(\.ground, of: theme), in: RoundedRectangle(cornerRadius: Radius.small))
+            .overlay(
+                RoundedRectangle(cornerRadius: Radius.small)
+                    .strokeBorder(isSelected ? Palette.accentInk : Palette.hairline, lineWidth: isSelected ? 2 : 1)
+            )
+            Text(theme.label)
+                .font(TypeScale.label)
+                .foregroundStyle(isSelected ? Palette.ink : Palette.inkSoft)
+        }
+        .contentShape(Rectangle())
     }
 }

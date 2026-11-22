@@ -4,7 +4,12 @@ import SwiftUI
 struct RootView: View {
     @Bindable var model: AppModel
 
+    /// Changer de mode reconstruit la page : les couleurs sont relues, l'état vit dans le modèle.
     var body: some View {
+        content.id(model.theme)
+    }
+
+    private var content: some View {
         HStack(spacing: 0) {
             SidebarView(model: model)
             Rectangle().fill(Palette.hairline).frame(width: 1)

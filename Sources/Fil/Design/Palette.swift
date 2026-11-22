@@ -5,37 +5,79 @@ import UIKit
 #endif
 import SwiftUI
 
+/// Les couleurs lues par les vues. Chacune suit l'apparence (clair, sombre) et le mode choisi
+/// (`ThemeSelection`) au moment du dessin ; les valeurs viennent de `PaletteSet`, jamais d'ici.
 enum Palette {
-    static let ground = adaptive(light: (0.92, 0.94, 0.97), dark: (0.07, 0.10, 0.15))
-    static let groundSunk = adaptive(light: (0.86, 0.90, 0.95), dark: (0.05, 0.08, 0.12))
-    static let surface = adaptive(light: (0.98, 0.99, 1.00), dark: (0.11, 0.15, 0.21))
-    static let ink = adaptive(light: (0.11, 0.15, 0.21), dark: (0.92, 0.95, 1.00))
-    static let inkSoft = adaptive(light: (0.33, 0.39, 0.48), dark: (0.73, 0.78, 0.87))
-    static let inkFaint = adaptive(light: (0.43, 0.49, 0.59), dark: (0.62, 0.69, 0.79))
-    static let hairline = adaptive(light: (0.78, 0.83, 0.91), dark: (0.20, 0.27, 0.38))
-    static let accent = adaptive(light: (0.67, 0.79, 0.94), dark: (0.51, 0.68, 0.90))
-    static let accentWash = adaptive(light: (0.85, 0.91, 0.98), dark: (0.15, 0.22, 0.33))
-    static let onAccent = adaptive(light: (0.10, 0.20, 0.36), dark: (0.07, 0.13, 0.24))
-    static let accentInk = adaptive(light: (0.22, 0.40, 0.70), dark: (0.61, 0.80, 1.00))
-    static let alert = adaptive(light: (0.60, 0.27, 0.23), dark: (0.93, 0.58, 0.52))
-    static let alertWash = adaptive(light: (0.97, 0.91, 0.89), dark: (0.24, 0.13, 0.13))
-    /// Fond de l'aperçu photo, et son texte : noir dans les deux apparences, seule la photo a de la couleur.
+    static let ground = themed(\.ground)
+    static let groundSunk = themed(\.groundSunk)
+    static let surface = themed(\.surface)
+    static let ink = themed(\.ink)
+    static let inkSoft = themed(\.inkSoft)
+    static let inkFaint = themed(\.inkFaint)
+    static let hairline = themed(\.hairline)
+    static let accent = themed(\.accent)
+    static let accentWash = themed(\.accentWash)
+    static let onAccent = themed(\.onAccent)
+    static let accentInk = themed(\.accentInk)
+    static let alert = themed(\.alert)
+    static let alertWash = themed(\.alertWash)
+    /// Pour le seul avertissement « non chiffré » : ni alarme, ni accent.
+    static let caution = themed(\.caution)
+    static let success = themed(\.success)
+    static let progress = themed(\.progress)
+    static let selection = themed(\.selection)
+    /// Fond de l'aperçu photo, et son texte : noir dans les deux apparences et dans tous les modes.
     static let darkroom = Color.black
     static let onDarkroom = Color.white
-    /// Pour le seul avertissement « non chiffré » : ni alarme, ni accent.
-    static let caution = adaptive(light: (0.55, 0.42, 0.16), dark: (0.90, 0.76, 0.45))
 
-    private static func adaptive(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> Color {
+    /// Une couleur fixée à un mode, qui suit seulement l'apparence : pour montrer un mode qui n'est pas le courant.
+    static func preview(_ token: PaletteToken, of theme: ThemeID) -> Color {
+        color { theme.palette[keyPath: token] }
+    }
+
+    #if os(macOS)
+    /// La même couleur pour AppKit (tableau des fichiers).
+    static func nsColor(_ token: PaletteToken) -> NSColor {
+        dynamicNSColor { ThemeSelection.current.palette[keyPath: token] }
+    }
+    #endif
+
+    private static func themed(_ token: PaletteToken) -> Color {
+        color { ThemeSelection.current.palette[keyPath: token] }
+    }
+
+    private static func color(_ shade: @escaping @Sendable () -> Shade) -> Color {
         #if os(macOS)
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let values = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(calibratedRed: values.0, green: values.1, blue: values.2, alpha: 1)
-        })
+        Color(nsColor: dynamicNSColor(shade))
         #else
         Color(uiColor: UIColor { traits in
-            let values = traits.userInterfaceStyle == .dark ? dark : light
-            return UIColor(red: values.0, green: values.1, blue: values.2, alpha: 1)
+            let value = shade()
+            return UIColor(srgb: traits.userInterfaceStyle == .dark ? value.dark : value.light)
         })
         #endif
     }
+
+    #if os(macOS)
+    private static func dynamicNSColor(_ shade: @escaping @Sendable () -> Shade) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let value = shade()
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(srgb: isDark ? value.dark : value.light)
+        }
+    }
+    #endif
 }
+
+#if os(macOS)
+extension NSColor {
+    convenience init(srgb hex: UInt32) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+#else
+extension UIColor {
+    convenience init(srgb hex: UInt32) {
+        self.init(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+#endif
