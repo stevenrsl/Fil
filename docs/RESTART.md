@@ -33,7 +33,7 @@ swift build
 swift test                      # 189 tests ; les 21 d'intégration sont ignorés sans serveurs
 Tools/integration-tests.sh      # lance les serveurs locaux, exécute les 21 tests d'intégration, arrête tout
 swift run Fil
-Tools/bundle.sh                 # .build/Fil.app, signé ad hoc
+Tools/bundle.sh                 # .build/Fil.app, signé Apple Development (ad hoc à défaut)
 ```
 
 `Tools/test-servers.sh start|stop` lance ou arrête seuls les serveurs (SFTP 2222, WebDAV 8088, WebDAV HTTPS 8443, FTP 2121, FTP sans MLSD 2122, FTPS 2990) ; les variables sont dans `$TMPDIR/fil-test-servers/env` (hors de `.build`, que `swift package clean` efface).
@@ -60,6 +60,6 @@ Tools/bundle.sh                 # .build/Fil.app, signé ad hoc
 - Apache sans root, avec deux ports d'écoute, demande `Mutex file:<dossier>` ; les guillemets ne sont pas interprétés dans cet argument.
 - Swift compare les chaînes à équivalence canonique près : pour vérifier une normalisation Unicode, comparer les octets UTF-8.
 - Le délégué par tâche d'URLSession ne reçoit pas la progression des téléchargements : elle passe par le délégué de session (`WebDAVSessionRelay`).
-- Chaque recompilation change la signature ad hoc : macOS redemande l'accès aux mots de passe enregistrés par une version précédente.
+- Signé ad hoc, chaque recompilation redemande l'accès aux mots de passe du trousseau. `bundle.sh` signe donc avec l'identité Apple Development : un dernier « Toujours autoriser » tient entre les builds.
 
 Ne pas modifier les jetons de `Palette.swift` au niveau d'une vue. Ajouter une décision dans `docs/DECISIONS.md` avant un choix architectural.
