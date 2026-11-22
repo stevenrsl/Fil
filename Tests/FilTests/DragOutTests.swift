@@ -77,32 +77,32 @@ final class DragOutTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
     }
 
-    func testLinksOfUnknownTargetCannotBeDragged() async {
-        let provider = MockProvider(files: ["/a.txt": "x"])
-        let browser = BrowserModel(connection: provider.connection, provider: provider, home: .root, transfers: TransferQueue()) { FileManager.default.temporaryDirectory }
-        XCTAssertNil(browser.dragItem(for: RemoteFile(name: "lien", path: RemotePath("/lien"), kind: .link)))
-        let item = browser.dragItem(for: RemoteFile(name: "a.txt", path: RemotePath("/a.txt"), kind: .file, byteCount: 1))
-        XCTAssertEqual(item?.suggestedName, "a.txt")
-        XCTAssertEqual(item?.registeredTypeIdentifiers, ["public.plain-text"])
+    func testLinksOfUnknownTargetCannotBePromised() {
+        XCTAssertNil(BrowserModel.promisedType(for: RemoteFile(name: "lien", path: RemotePath("/lien"), kind: .link)))
+        XCTAssertEqual(BrowserModel.promisedType(for: RemoteFile(name: "a.txt", path: RemotePath("/a.txt"), kind: .file)), .plainText)
+        XCTAssertEqual(BrowserModel.promisedType(for: RemoteFile(name: "www", path: RemotePath("/www"), kind: .directory)), .folder)
+        XCTAssertEqual(BrowserModel.promisedType(for: RemoteFile(name: "LISEZMOI", path: RemotePath("/LISEZMOI"), kind: .file)), .data)
     }
 
-    /// Ce que fait l'application qui reçoit le dépôt : demander le fichier, une fois arrivé.
-    func testItemProviderHandsOverTheDownloadedFile() async throws {
+    /// Ce que fait le Finder au dépôt : il propose une URL dans le dossier d'arrivée et attend la réponse.
+    func testPromiseWritesIntoTheDropFolderWithoutOverwriting() async throws {
         let provider = MockProvider(files: ["/notes.txt": "bonjour"])
         let queue = TransferQueue()
         let browser = BrowserModel(connection: provider.connection, provider: provider, home: .root, transfers: queue) { FileManager.default.temporaryDirectory }
-        let item = try XCTUnwrap(browser.dragItem(for: RemoteFile(name: "notes.txt", path: RemotePath("/notes.txt"), kind: .file, byteCount: 7)))
-        let text = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-            _ = item.loadFileRepresentation(forTypeIdentifier: "public.plain-text") { url, error in
-                if let url, let text = try? String(contentsOf: url, encoding: .utf8) {
-                    continuation.resume(returning: text)
-                } else {
-                    continuation.resume(throwing: error ?? CocoaError(.fileReadUnknown))
-                }
-            }
+        let folder = try makeTemporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try "ancien".write(to: folder.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+
+        let outcomes = Outcomes()
+        let file = RemoteFile(name: "notes.txt", path: RemotePath("/notes.txt"), kind: .file, byteCount: 7)
+        browser.deliverPromise(file, to: folder.appendingPathComponent("notes.txt")) { error in
+            outcomes.values.append(error.map { .failure($0) } ?? .success(folder))
         }
-        XCTAssertEqual(text, "bonjour")
+        await waitUntil("livré") { !outcomes.values.isEmpty }
+
+        XCTAssertNoThrow(try outcomes.values[0].get())
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("notes.txt"), encoding: .utf8), "ancien")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("notes (2).txt"), encoding: .utf8), "bonjour")
         XCTAssertEqual(queue.items.first?.state, .done)
-        if let delivered = queue.items.first?.localURL { try? FileManager.default.removeItem(at: delivered.deletingLastPathComponent()) }
     }
 }

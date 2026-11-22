@@ -16,7 +16,6 @@ struct BrowserView: View {
     var offer: SecurityOffer?
     let close: () -> Void
 
-    @State private var sortOrder = [KeyPathComparator(\RemoteFile.name)]
     @State private var isDropTargeted = false
     @State private var isImporting = false
     @State private var pendingDeletion: [RemoteFile] = []
@@ -82,15 +81,6 @@ struct BrowserView: View {
         }
         .onChange(of: browser.renaming) { _, file in
             if let file { newName = file.name }
-        }
-        .onChange(of: sortOrder) { _, order in
-            guard let first = order.first else { return }
-            switch first.keyPath {
-            case \RemoteFile.sortableSize: browser.sortKey = .size
-            case \RemoteFile.sortableDate: browser.sortKey = .modified
-            default: browser.sortKey = .name
-            }
-            browser.ascending = first.order == .forward
         }
     }
 
@@ -199,67 +189,19 @@ struct BrowserView: View {
         .overlay(RoundedRectangle(cornerRadius: Radius.large).stroke(Palette.hairline))
     }
 
+    /// `NSTableView` plutôt que `Table` : seul AppKit sait promettre un fichier au Finder sans le télécharger d'avance.
     private var table: some View {
-        Table(of: RemoteFile.self, selection: $browser.selection, sortOrder: $sortOrder) {
-            TableColumn("Nom", value: \.name) { file in
-                HStack(spacing: Spacing.tight) {
-                    Image(systemName: icon(for: file))
-                        .foregroundStyle(Palette.accentInk)
-                        .frame(width: 16)
-                    Text(file.name)
-                        .font(TypeScale.body)
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            TableColumn("Taille", value: \.sortableSize) { file in
-                Text(file.byteCount.map(Format.bytes) ?? "—")
-                    .font(TypeScale.figures)
-                    .foregroundStyle(Palette.inkFaint)
-            }
-            .width(min: 70, ideal: 90, max: 130)
-            TableColumn("Modifié", value: \.sortableDate) { file in
-                Text(file.modifiedAt.map { Format.date($0) } ?? "—")
-                    .font(TypeScale.label)
-                    .foregroundStyle(Palette.inkFaint)
-            }
-            .width(min: 110, ideal: 150, max: 200)
-        } rows: {
-            ForEach(browser.visibleFiles) { file in
-                // Glisser une ligne vers le Finder la télécharge là où elle est déposée.
-                TableRow(file).itemProvider { browser.dragItem(for: file) }
-            }
-        }
-        .tableStyle(.inset(alternatesRowBackgrounds: false))
-        .scrollContentBackground(.hidden)
-        .contextMenu(forSelectionType: RemoteFile.ID.self) { ids in
-            let chosen = browser.visibleFiles.filter { ids.contains($0.id) }
-            if chosen.count == 1, let only = chosen.first, only.kind != .file {
-                Button("Ouvrir") { browser.open(ids) }
-            }
-            if chosen.count == 1, let only = chosen.first, only.kind == .file {
-                Button("Modifier") { browser.edit(only) }
-            }
-            Button(chosen.count > 1 ? "Télécharger \(Format.items(chosen.count))" : "Télécharger") { browser.download(chosen) }
-                .disabled(chosen.isEmpty)
-            if chosen.count == 1, let only = chosen.first {
-                Button("Renommer…") { browser.renaming = only }
-            }
-            Button("Copier le chemin") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(chosen.map(\.path.value).joined(separator: "\n"), forType: .string)
-            }
-            .disabled(chosen.isEmpty)
-            Divider()
-            Button("Supprimer…", role: .destructive) { pendingDeletion = chosen }
-                .disabled(chosen.isEmpty)
-        } primaryAction: { ids in
-            browser.open(ids)
-        }
-        .onDeleteCommand {
-            if !browser.selectedFiles.isEmpty { pendingDeletion = browser.selectedFiles }
-        }
+        FileTable(
+            browser: browser,
+            files: browser.visibleFiles,
+            selection: browser.selection,
+            actions: .init(
+                delete: { pendingDeletion = $0 },
+                rename: { browser.renaming = $0 },
+                upload: { requestUpload($0) },
+                dropTargeted: { targeted in if isDropTargeted != targeted { isDropTargeted = targeted } }
+            )
+        )
     }
 
     private func emptyMessage(_ text: String) -> some View {
@@ -268,14 +210,6 @@ struct BrowserView: View {
             .foregroundStyle(Palette.inkSoft)
             .multilineTextAlignment(.center)
             .padding(Spacing.loose)
-    }
-
-    private func icon(for file: RemoteFile) -> String {
-        switch file.kind {
-        case .directory: file.isSymbolicLink ? "folder.badge.questionmark" : "folder"
-        case .link: "arrow.turn.down.right"
-        case .file: "doc"
-        }
     }
 
     // MARK: Pied
@@ -324,10 +258,4 @@ struct BrowserView: View {
     private func isPresenting<Item>(_ items: Binding<[Item]>) -> Binding<Bool> {
         Binding(get: { !items.wrappedValue.isEmpty }, set: { if !$0 { items.wrappedValue = [] } })
     }
-}
-
-/// Clés de tri pour les colonnes ; l'ordre réel (dossiers d'abord) est décidé par `BrowserModel`.
-extension RemoteFile {
-    var sortableSize: Int64 { byteCount ?? -1 }
-    var sortableDate: Date { modifiedAt ?? .distantPast }
 }

@@ -1,64 +1,38 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// Glisser depuis Fil vers le Finder (ou une autre application) : une promesse de fichier.
-/// Rien n'est téléchargé avant le dépôt ; ensuite, le téléchargement passe par la file des transferts,
-/// visible et annulable dans le plateau, puis le fichier est remis à l'application qui l'a reçu.
+/// Glisser depuis Fil vers le Finder (ou une autre application) : une promesse de fichier AppKit
+/// (`NSFilePromiseProvider`, voir `FileTable`). Rien n'est téléchargé avant le dépôt ; ensuite, le
+/// téléchargement passe par la file des transferts, visible et annulable dans le plateau, et écrit
+/// directement dans le dossier où le fichier a été déposé.
+///
+/// SwiftUI (`TableRow.itemProvider`, `.draggable`) ne fait pas de vraie promesse sur macOS : il charge
+/// le fichier de façon synchrone au début du glisser, sur le fil principal, ce qui gèle Fil.
 extension BrowserModel {
-    func dragItem(for file: RemoteFile) -> NSItemProvider? {
-        // Lien de cible inconnue : on ne sait pas promettre un fichier ou un dossier.
-        guard file.kind != .link else { return nil }
-        let type: UTType = file.isDirectory ? .folder : (UTType(filenameExtension: (file.name as NSString).pathExtension) ?? .data)
-        let item = NSItemProvider()
-        item.suggestedName = file.name
-        item.registerFileRepresentation(forTypeIdentifier: type.identifier, fileOptions: [], visibility: .all) { [weak self] completion in
-            let progress = Progress(totalUnitCount: max(file.byteCount ?? 1, 1))
-            let reply = PromiseReply(completion)
-            Task { @MainActor in
-                guard let self else { return reply(.failure(CancellationError())) }
-                self.deliver(file, progress: progress, reply: reply)
+    /// Type promis pour `file`, ou `nil` si on ne sait pas dire ce qu'on promet (lien de cible inconnue).
+    static func promisedType(for file: RemoteFile) -> UTType? {
+        switch file.kind {
+        case .link: nil
+        case .directory: .folder
+        case .file: UTType(filenameExtension: (file.name as NSString).pathExtension) ?? .data
+        }
+    }
+
+    /// Tient la promesse : télécharge `file` dans le dossier de `destination`, l'URL que propose
+    /// l'application qui reçoit. Si ce nom est déjà pris, le fichier arrive sous « nom (2) ».
+    @discardableResult
+    func deliverPromise(_ file: RemoteFile, to destination: URL, reply: @escaping @MainActor (Error?) -> Void) -> UUID {
+        transfers.download(file, via: provider, into: destination.deletingLastPathComponent()) { result in
+            switch result {
+            case .success: reply(nil)
+            case .failure(let error): reply(error)
             }
-            return progress
-        }
-        return item
-    }
-
-    private func deliver(_ file: RemoteFile, progress: Progress, reply: PromiseReply) {
-        let folder: URL
-        do {
-            folder = try DragCache.makeFolder()
-        } catch {
-            return reply(.failure(error))
-        }
-        let id = transfers.download(file, via: provider, into: folder) { result in
-            if case .success = result { progress.completedUnitCount = progress.totalUnitCount }
-            reply(result)
-        }
-        // Annuler depuis le Finder annule le transfert ; l'inverse passe par la promesse.
-        let transfers = transfers
-        progress.cancellationHandler = { Task { @MainActor in transfers.cancel(id) } }
-    }
-}
-
-/// Le rappel de `NSItemProvider` n'est pas marqué `Sendable`, mais il est fait pour être appelé
-/// depuis n'importe quel fil, une seule fois.
-private struct PromiseReply: @unchecked Sendable {
-    private let completion: (URL?, Bool, Error?) -> Void
-
-    init(_ completion: @escaping (URL?, Bool, Error?) -> Void) {
-        self.completion = completion
-    }
-
-    func callAsFunction(_ result: Result<URL, Error>) {
-        switch result {
-        case .success(let url): completion(url, false, nil)
-        case .failure(let error): completion(nil, false, error)
         }
     }
 }
 
-/// Copies remises par glisser-déposer. Reconstructible : l'application qui les reçoit en fait sa
-/// propre copie, et ce qui a plus d'un jour est effacé au lancement.
+/// Copies remises par les anciennes versions du glisser, qui passaient par le cache. Ce qui a plus
+/// d'un jour est effacé au lancement ; un fichier venant de là et redéposé sur Fil n'est pas renvoyé.
 enum DragCache {
     static let staleAfter: TimeInterval = 24 * 3600
 

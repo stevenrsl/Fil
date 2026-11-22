@@ -338,3 +338,10 @@
 **Pourquoi.** Un dossier de photos (1 703 JPEG de 20 à 28 Mo dans le premier essai réel) se parcourt pour choisir, pas pour tout télécharger. WebDAV ne fournit pas de vignettes : le fichier entier est le seul chemin sans API propre au serveur. Une photo par une, avec la suivante préparée, garde le geste fluide sans saturer le lien.
 
 **Cache.** Une entrée par version du fichier (chemin, taille, date du listing) : un fichier changé sur le serveur ne ressort jamais du cache. Le dossier est effacé à chaque lancement, et iOS peut le vider quand il veut.
+
+## 2026-11-21 · Liste des fichiers en `NSTableView` : le glisser vers le Finder est une vraie promesse
+
+**Décision.** Le tableau de la phase « fichiers » est un `NSTableView` ([`FileTable`](../Sources/Fil/Views/FileTable.swift)) au lieu du `Table` de SwiftUI ; les cellules restent des vues SwiftUI (`FileCell`) pour garder les jetons de `Design/`. Chaque ligne glissée est un `NSFilePromiseProvider` : le Finder ne demande le fichier qu'au dépôt, et [`BrowserModel.deliverPromise`](../Sources/Fil/App/DragOut.swift) le télécharge par la file des transferts directement dans le dossier d'arrivée (« nom (2) » si le nom est pris), sans copie dans le cache. Le tri, la sélection, le double-clic, Entrée, Suppr, le menu contextuel et la recherche par frappe suivent le modèle comme avant. Le tableau reçoit lui-même les dépôts du Finder et refuse ses propres lignes. Remplace la décision du 2026-10-16 sur le chemin du glisser ; [`DragCache`](../Sources/Fil/App/DragOut.swift) ne sert plus qu'à effacer les anciennes copies.
+
+**Pourquoi.** Sur macOS, `TableRow.itemProvider` comme `.draggable` chargent le fichier de façon synchrone au début du glisser, sur le fil principal (`NSItemProvider.loadURLSynchronously`, vu dans un rapport de blocage) : le téléchargement attendait ce même fil, et Fil gelait sans fin. Seule la promesse d'AppKit attend le dépôt sans rien bloquer.
+
