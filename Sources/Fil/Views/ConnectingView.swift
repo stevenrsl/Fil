@@ -47,7 +47,9 @@ struct ConnectingView: View {
     private func hint(elapsed: TimeInterval) -> String? {
         guard elapsed >= 3 else { return nil }
         if connection.protocol == .mega {
-            return "Au premier appel, MEGAcmd démarre son serveur et charge ton espace : cela peut prendre une minute."
+            return MegaCMDInstaller.isInstalled
+                ? "MEGAcmd démarre et charge ton espace. Si son serveur ne répond plus, Fil le relance de lui-même au bout de 20 secondes."
+                : "La première fois, Fil installe MEGAcmd, l'outil officiel de MEGA (environ 60 Mo), puis charge ton espace : compte une minute ou deux."
         }
         if connection.protocol == .sftp {
             return "Si macOS demande l'accès au trousseau pour Fil, autorise-le : c'est ainsi que ssh reçoit le mot de passe."

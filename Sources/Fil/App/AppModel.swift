@@ -13,10 +13,20 @@ final class AppModel {
         }
     }
     var selectedConnectionID: UUID? {
-        didSet { if oldValue != selectedConnectionID { passwordDraft = "" } }
+        didSet {
+            if oldValue != selectedConnectionID {
+                passwordDraft = ""
+                oneTimeCodeDraft = ""
+                oneTimeCodeRequestedFor = nil
+            }
+        }
     }
     /// Saisie en cours, jamais persistée telle quelle : elle part au Keychain à la connexion.
     var passwordDraft = ""
+    /// Code de double authentification, jamais enregistré : il ne sert qu'à la connexion qui suit.
+    var oneTimeCodeDraft = ""
+    /// La connexion dont le compte a demandé un code ; le champ « Code » ne s'affiche que pour elle.
+    private(set) var oneTimeCodeRequestedFor: UUID?
     private(set) var browser: BrowserModel?
     private(set) var savedPasswordIDs: Set<UUID> = []
     /// FTP seulement : le serveur de la connexion ouverte accepte FTPS et l'utilisateur n'a pas dit non.
@@ -267,10 +277,14 @@ final class AppModel {
         saveFavorites()
         phase = .connecting(connection)
         let provider = makeProvider(connection, password)
+        let code = oneTimeCodeDraft.filter(\.isNumber)
+        oneTimeCodeDraft = ""
+        if !code.isEmpty, let accepting = provider as? any OneTimeCodeAccepting { accepting.useOneTimeCode(code) }
         connectTask = Task { [weak self] in
             do {
                 let home = try await provider.connect()
                 guard let self, case .connecting(let current) = self.phase, current.id == connection.id else { return }
+                self.oneTimeCodeRequestedFor = nil
                 #if os(macOS)
                 let finder = FinderMount.isSupported(connection.protocol) ? FinderAccess(volumes: self.volumes, password: password) : nil
                 self.browser = BrowserModel(connection: connection, provider: provider, home: home, transfers: self.transfers, edits: self.edits, finder: finder) { [weak self] in
@@ -303,6 +317,7 @@ final class AppModel {
         if case .certificateChanged(_, let presented?) = error as? ProviderError, let previous = connection.trustedCertificate {
             return .confirming(connection, .certificateReplacement(previous: previous, presented: presented))
         }
+        if case .oneTimeCodeRequired = error as? ProviderError { oneTimeCodeRequestedFor = connection.id }
         switch error as? ProviderError {
         case .hostKeyUnknown(let keys) where !keys.isEmpty: return .confirming(connection, .hostKey(keys))
         case .certificateToConfirm(let certificate): return .confirming(connection, .certificate(certificate))

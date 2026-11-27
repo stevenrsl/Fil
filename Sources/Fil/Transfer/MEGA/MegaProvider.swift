@@ -1,41 +1,12 @@
 import Foundation
+import os
 
 #if os(macOS)
-
-/// Lance une commande MEGAcmd (`mega-<commande>`). Derrière un protocole pour les tests.
-protocol MegaCommandRunning: Sendable {
-    func run(_ command: String, _ arguments: [String], timeout: Duration) async throws -> ProcessRunner.CapturedOutput
-}
-
-/// MEGAcmd, l'outil officiel de MEGA, installé par l'utilisateur. Ses commandes parlent à `mega-cmd-server`,
-/// qui garde la session ouverte entre deux appels : Fil ne se reconnecte pas à chaque liste.
-struct MegaCMD: MegaCommandRunning {
-    static let missing = ProviderError.server("MEGAcmd, l'outil officiel de MEGA, n'est pas installé. Installe-le depuis mega.io/cmd, puis reconnecte-toi.")
-
-    /// Dossier qui contient `mega-exec` et les scripts `mega-*`.
-    static func directory(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = ["/Applications/MEGAcmd.app/Contents/MacOS", home + "/Applications/MEGAcmd.app/Contents/MacOS"]
-            + (environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        return candidates
-            .first { FileManager.default.isExecutableFile(atPath: $0 + "/mega-exec") }
-            .map { URL(fileURLWithPath: $0, isDirectory: true) }
-    }
-
-    func run(_ command: String, _ arguments: [String], timeout: Duration) async throws -> ProcessRunner.CapturedOutput {
-        guard let directory = Self.directory() else { throw Self.missing }
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
-        let output = await ProcessRunner.runCapturingOutput(directory.appendingPathComponent("mega-" + command), arguments: arguments, environment: environment, timeout: timeout)
-        try Task.checkCancellation()
-        return output
-    }
-}
 
 /// MEGA par MEGAcmd. Le chiffrement reste celui de MEGA, fait par son outil : Fil ne voit que des chemins.
 /// Les téléchargements arrivent dans un dossier caché à côté de leur destination, puis sont renommés :
 /// aucune copie, rien hors du volume d'arrivée.
-final class MegaProvider: RemoteFileProvider, @unchecked Sendable {
+final class MegaProvider: RemoteFileProvider, OneTimeCodeAccepting, @unchecked Sendable {
     let connection: RemoteConnection
     let canResumeUploads = false
     /// Le serveur MEGAcmd mène lui-même ses transferts : deux à la fois suffisent à remplir le lien sans l'encombrer.
@@ -43,29 +14,47 @@ final class MegaProvider: RemoteFileProvider, @unchecked Sendable {
     private let password: String
     private let runner: any MegaCommandRunning
     private let base: RemotePath
+    private let code = OSAllocatedUnfairLock(initialState: "")
+    /// Intervalle entre deux lectures de `mega-transfers`.
+    private let poll: Duration
 
     static let quick: Duration = .seconds(120)
+    /// `whoami` répond tout de suite d'un serveur vivant : au-delà, il est figé.
+    static let check: Duration = .seconds(20)
     static let transfer: Duration = .seconds(24 * 60 * 60)
 
-    init(connection: RemoteConnection, password: String, runner: any MegaCommandRunning = MegaCMD()) {
+    init(connection: RemoteConnection, password: String, runner: any MegaCommandRunning = MegaCMD(), poll: Duration = .seconds(1)) {
         self.connection = connection
+        self.poll = poll
         self.password = password
         self.runner = runner
         let configured = connection.path.trimmingCharacters(in: .whitespacesAndNewlines)
         self.base = configured.isEmpty ? .root : RemotePath(configured)
     }
 
+    func useOneTimeCode(_ value: String) { code.withLock { $0 = value } }
+
     private var email: String { connection.username.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func connect() async throws -> RemotePath {
         try await ensureLoggedIn()
+        // La mise à jour automatique de MEGAcmd lance un processus fils qui reste coincé avec la prise du
+        // serveur (vu en usage réel) : la copie de MEGAcmd utilisée par Fil ne se met pas à jour seule.
+        _ = try? await runner.run("exec", ["update", "--auto=off"], timeout: Self.check)
         _ = try await list(base)
         return base
     }
 
     /// Reprend la session de MEGAcmd si c'est le bon compte, sinon se connecte avec le mot de passe du trousseau.
     private func ensureLoggedIn() async throws {
-        let whoami = try await runner.run("whoami", [], timeout: Self.quick)
+        let whoami: ProcessRunner.CapturedOutput
+        do {
+            whoami = try await runner.run("whoami", [], timeout: Self.check)
+        } catch ProviderError.timedOut {
+            // Serveur figé : on le remplace une fois, puis on redemande.
+            await runner.restartServer()
+            whoami = try await runner.run("whoami", [], timeout: Self.quick)
+        }
         if whoami.status == 0, let current = Self.account(from: whoami.standardOutput) {
             guard current.caseInsensitiveCompare(email) == .orderedSame else {
                 throw ProviderError.server("MEGAcmd est déjà connecté au compte \(current). Déconnecte-le avec « mega-logout » dans le Terminal, ou indique cet e-mail dans la connexion.")
@@ -73,12 +62,16 @@ final class MegaProvider: RemoteFileProvider, @unchecked Sendable {
             return
         }
         guard !password.isEmpty else { throw ProviderError.server("Ajoute le mot de passe de ton compte MEGA.") }
-        let login = try await runner.run("login", [email, password], timeout: Self.quick)
-        guard login.status != 0 else { return }
-        let text = Self.message(login).lowercased()
-        if text.contains("auth-code") || text.contains("two-factor") || text.contains("2fa") || text.contains("multi-factor") {
-            throw ProviderError.server("Ton compte MEGA demande un code de double authentification. Connecte-toi une fois dans le Terminal avec « mega-login \(email) » : MEGAcmd garde la session et Fil s'en sert ensuite.")
+        let typedCode = code.withLock { value in defer { value = "" }; return value }
+        let arguments = (typedCode.isEmpty ? [] : ["--auth-code=" + typedCode]) + [email, password]
+        let login = try await runner.run("login", arguments, timeout: Self.quick)
+        // Une demande de code laissée sans réponse peut finir avec le statut 0 : on lit la sortie d'abord.
+        let text = (login.standardOutput + "\n" + login.errorOutput).lowercased()
+        let mentionsCode = ["authentication app", "authentication code", "two-factor", "multifactor", "multi-factor"].contains { text.contains($0) }
+        if mentionsCode || (login.status != 0 && !typedCode.isEmpty && text.contains("incorrect authentication")) {
+            throw ProviderError.oneTimeCodeRequired(service: "MEGA", rejected: !typedCode.isEmpty)
         }
+        guard login.status != 0 else { return }
         throw ProviderError.authenticationFailed
     }
 
@@ -96,24 +89,63 @@ final class MegaProvider: RemoteFileProvider, @unchecked Sendable {
         let landing = folder.appendingPathComponent(".fil-mega-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: landing, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: landing) }
-        let monitor = Self.monitor(landing, progress: progress)
-        defer { monitor.cancel() }
-        let output = try await runner.run("get", [file.path.value, landing.path + "/"], timeout: Self.transfer)
-        guard output.status == 0 else { throw Self.error(from: output, subject: file.name) }
+        try await transfer("get", [file.path.value, landing.path + "/"], direction: "--only-downloads", name: file.name, total: file.byteCount, progress: progress)
         let received = landing.appendingPathComponent(file.name)
-        guard fileManager.fileExists(atPath: received.path) else {
-            throw ProviderError.incomplete(name: file.name, received: 0, expected: file.byteCount ?? 0)
+        let size = LocalFile.size(of: received) ?? -1
+        guard size >= 0, file.byteCount.map({ $0 == size }) ?? true else {
+            throw ProviderError.incomplete(name: file.name, received: max(size, 0), expected: file.byteCount ?? 0)
         }
         try fileManager.removeItemIfExists(at: destination)
         try fileManager.moveItem(at: received, to: destination)
-        progress(LocalFile.size(of: destination) ?? 0)
+        progress(size)
     }
 
     func upload(_ source: URL, to destination: RemotePath, resumingAt offset: Int64, progress: @escaping ProgressHandler) async throws {
+        let total = LocalFile.size(of: source) ?? 0
         // Sans `-c` : une destination absente devient le nom du fichier envoyé, jamais un dossier.
-        let output = try await runner.run("put", [source.path, destination.value], timeout: Self.transfer)
-        guard output.status == 0 else { throw Self.error(from: output, subject: destination.name) }
-        progress(LocalFile.size(of: source) ?? 0)
+        try await transfer("put", [source.path, destination.value], direction: "--only-uploads", name: destination.name, total: total, progress: progress)
+        let arrived = try await size(of: destination)
+        guard arrived == total else { throw ProviderError.incomplete(name: destination.name, received: arrived ?? 0, expected: total) }
+        progress(total)
+    }
+
+    /// Met le transfert dans la file du serveur MEGAcmd (`-q`), puis le suit par son numéro dans `mega-transfers`.
+    /// Le client `mega-put` n'affiche aucune progression hors d'un terminal, et le transfert appartient au
+    /// serveur : il continue même si le client s'arrête. Suivre le serveur est donc la seule mesure fiable.
+    private func transfer(_ command: String, _ arguments: [String], direction: String, name: String, total: Int64?, progress: @escaping ProgressHandler) async throws {
+        let queued = try await runner.run(command, ["-q", "--print-tag-at-start"] + arguments, timeout: Self.quick)
+        guard queued.status == 0, let tag = Self.tag(from: queued.standardOutput + "\n" + queued.errorOutput) else {
+            throw Self.error(from: queued, subject: name)
+        }
+        do {
+            var missing = 0
+            while true {
+                try await Task.sleep(for: poll)
+                let listing = try await runner.run("transfers", [direction, "--show-completed", "--output-cols=TAG,PROGRESS,STATE", "--col-separator=|"], timeout: Self.check)
+                guard let row = Self.transfers(from: listing.standardOutput).first(where: { $0.tag == tag }) else {
+                    // Sorti de la liste : l'appelant vérifie ce qui est arrivé.
+                    missing += 1
+                    if missing >= 3 { return }
+                    continue
+                }
+                missing = 0
+                if let fraction = row.fraction, let total, total > 0 { progress(Int64((Double(total) * fraction).rounded(.down))) }
+                switch row.state {
+                case "COMPLETED": return
+                case "FAILED": throw ProviderError.server("MEGA a refusé le transfert de « \(name) ». Réessaie ; si cela recommence, vérifie l'espace libre de ton compte.")
+                case "CANCELLED": throw ProviderError.server("Le transfert de « \(name) » a été annulé dans MEGAcmd.")
+                default: continue
+                }
+            }
+        } catch {
+            if error is CancellationError || Task.isCancelled {
+                // Annulé dans Fil : le serveur l'arrête aussi, sinon il continuerait seul.
+                let runner = runner
+                Task.detached { _ = try? await runner.run("transfers", ["-c", tag], timeout: Self.check) }
+                throw CancellationError()
+            }
+            throw error
+        }
     }
 
     func size(of path: RemotePath) async throws -> Int64? {
@@ -167,27 +199,44 @@ final class MegaProvider: RemoteFileProvider, @unchecked Sendable {
         guard output.status == 0 else { throw Self.error(from: output, subject: path.name) }
     }
 
-    private static func monitor(_ directory: URL, progress: @escaping ProgressHandler) -> Task<Void, Never> {
-        Task.detached(priority: .utility) {
-            while !Task.isCancelled {
-                progress(bytes(in: directory))
-                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-            }
-        }
-    }
-
-    private static func bytes(in directory: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return 0 }
-        var total: Int64 = 0
-        for case let url as URL in enumerator {
-            if let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]), values.isRegularFile == true {
-                total += Int64(values.fileSize ?? 0)
-            }
-        }
-        return total
-    }
-
     // MARK: Lecture des sorties de MEGAcmd
+
+    /// « Upload started: Tag = 42 » → « 42 ».
+    static func tag(from output: String) -> String? {
+        let range = NSRange(output.startIndex..., in: output)
+        guard let match = tagPattern.firstMatch(in: output, range: range),
+              let value = Range(match.range(at: 1), in: output) else { return nil }
+        return String(output[value])
+    }
+
+    private static let tagPattern = try! NSRegularExpression(pattern: #"Tag\s*=\s*(-?[0-9]+)"#, options: .caseInsensitive)
+
+    struct TransferRow: Equatable {
+        let tag: String
+        let fraction: Double?
+        let state: String
+    }
+
+    /// Sortie de `mega-transfers --output-cols=TAG,PROGRESS,STATE --col-separator=|` :
+    /// « 42|48.78% of   11.00 GB|ACTIVE ». L'en-tête et les lignes inconnues sont ignorés.
+    static func transfers(from output: String) -> [TransferRow] {
+        output.split(whereSeparator: \.isNewline).compactMap { line in
+            let columns = line.split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard columns.count >= 3, !columns[0].isEmpty, columns[0].allSatisfy({ $0.isNumber || $0 == "-" }) else { return nil }
+            return TransferRow(tag: columns[0], fraction: fraction(in: columns[1]), state: columns[2].uppercased())
+        }
+    }
+
+    private static let percent = try! NSRegularExpression(pattern: #"([0-9]+(?:[.,][0-9]+)?)\s*%"#)
+
+    /// Premier pourcentage d'un texte de MEGAcmd, entre 0 et 1.
+    static func fraction(in text: String) -> Double? {
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = percent.firstMatch(in: text, range: range),
+              let number = Range(match.range(at: 1), in: text),
+              let value = Double(text[number].replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return min(max(value / 100, 0), 1)
+    }
 
     /// « Account e-mail: moi@exemple.fr » → l'adresse.
     static func account(from output: String) -> String? {

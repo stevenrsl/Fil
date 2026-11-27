@@ -9,6 +9,11 @@ protocol DirectoryDownloadProvider: RemoteFileProvider {
     func downloadDirectory(_ directory: RemoteFile, entries: [RemoteFile], to destination: URL, progress: @escaping ProgressHandler) async throws
 }
 
+/// Un fournisseur qui sait se connecter avec un code de double authentification, tapé dans Fil pour cette connexion seulement.
+protocol OneTimeCodeAccepting: AnyObject {
+    func useOneTimeCode(_ code: String)
+}
+
 /// Contrat commun à tous les protocoles. Aucun type de bibliothèque ne traverse cette frontière.
 /// L'annulation passe par l'annulation de la tâche Swift appelante.
 public protocol RemoteFileProvider: Sendable {
@@ -75,6 +80,8 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
     case connectionLimit
     /// Le transfert s'est terminé sans erreur mais il manque des octets.
     case incomplete(name: String, received: Int64, expected: Int64)
+    /// Le compte demande le code de son application d'authentification. `rejected` : celui qu'on a tapé n'est pas passé.
+    case oneTimeCodeRequired(service: String, rejected: Bool)
     /// Message déjà formulé pour l'utilisateur.
     case server(String)
 
@@ -122,6 +129,10 @@ public enum ProviderError: LocalizedError, Equatable, Sendable {
             "Le serveur a fermé la connexion : il limite le nombre de connexions simultanées."
         case .incomplete(let name, let received, let expected):
             "« \(name) » n'est arrivé qu'en partie (\(Format.progress(received, of: expected)))."
+        case .oneTimeCodeRequired(let service, let rejected):
+            rejected
+                ? "Ce code n'est pas passé : il a peut-être expiré. Tape celui que ton application d'authentification affiche maintenant."
+                : "Ton compte \(service) est protégé par la double authentification. Tape le code à six chiffres de ton application d'authentification."
         case .server(let message):
             message
         }

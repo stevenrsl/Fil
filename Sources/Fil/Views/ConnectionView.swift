@@ -115,6 +115,16 @@ struct ConnectionView: View {
                         }
                     }
                 }
+                if model.oneTimeCodeRequestedFor == id {
+                    GridRow {
+                        fieldLabel("Code")
+                        TextField("123456", text: $model.oneTimeCodeDraft)
+                            .textFieldStyle(FieldStyle())
+                            .frame(width: 120)
+                            .onSubmit { model.connect() }
+                            .help("Le code à six chiffres de ton application d'authentification. Il n'est pas enregistré.")
+                    }
+                }
                 GridRow {
                     fieldLabel(connection.protocol.pathIsRoot ? "Racine" : "Dossier")
                     TextField(pathPlaceholder(connection.protocol), text: binding(id, \.path, connection))
@@ -200,7 +210,7 @@ struct ConnectionView: View {
         case .kdrive:
             noteText("Indique l'identifiant de ton kDrive (les chiffres de son adresse) et ton e-mail Infomaniak. Avec la double authentification, crée un mot de passe d'application.")
         case .mega:
-            noteText("Fil passe par MEGAcmd, l'outil officiel de MEGA, à installer depuis mega.io/cmd. Les fichiers restent chiffrés par MEGA ; une suppression les met dans la corbeille de MEGA. Avec la double authentification, connecte-toi une fois dans le Terminal avec mega-login : Fil reprend ensuite la session.")
+            noteText("À la première connexion, Fil installe MEGAcmd, l'outil officiel de MEGA, après avoir vérifié sa signature. Les fichiers restent chiffrés par MEGA ; une suppression les met dans la corbeille de MEGA.")
         case .protonDrive:
             noteText("Fil télécharge et vérifie le CLI officiel Proton Drive à la première connexion. L’authentification se fait dans ton navigateur et la session reste dans le trousseau macOS.")
         }

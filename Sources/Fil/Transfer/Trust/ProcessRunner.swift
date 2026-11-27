@@ -48,9 +48,10 @@ enum ProcessRunner {
     }
 
     /// Variante utilisée par les adaptateurs de CLI : conserve stdout et stderr et peut être annulée.
-    static func runCapturingOutput(_ executable: URL, arguments: [String], environment: [String: String] = [:], timeout: Duration) async -> CapturedOutput {
+    static func runCapturingOutput(_ executable: URL, arguments: [String], environment: [String: String] = [:], currentDirectory: URL? = nil, timeout: Duration) async -> CapturedOutput {
         let process = Process()
         process.executableURL = executable
+        if let currentDirectory { process.currentDirectoryURL = currentDirectory }
         process.arguments = arguments
         process.environment = environment.isEmpty ? nil : environment
         let stdout = Pipe()
