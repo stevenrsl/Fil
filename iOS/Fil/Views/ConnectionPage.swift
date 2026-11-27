@@ -156,7 +156,7 @@ struct ConnectionPage: View {
             Text("Connexion HTTPS. La racine est le chemin WebDAV du serveur, par exemple /remote.php/dav/files/moi pour Nextcloud. Un certificat auto-signé peut être approuvé après vérification de son empreinte.")
         case .kdrive:
             Text("Indique l'identifiant de ton kDrive (les chiffres de son adresse) et ton e-mail Infomaniak. Avec la double authentification, crée un mot de passe d'application.")
-        case .ftp, .ftps, .sftp, .protonDrive:
+        case .ftp, .ftps, .sftp, .protonDrive, .mega:
             Text(proto.unavailableReason ?? "")
         }
     }
@@ -168,6 +168,7 @@ struct ConnectionPage: View {
         case .webdav: "cloud.exemple.fr"
         case .kdrive: "123456 ou 123456.connect.kdrive.infomaniak.com"
         case .protonDrive: "Aucune adresse : compte Proton Drive"
+        case .mega: "Aucune adresse : compte MEGA"
         }
     }
 }

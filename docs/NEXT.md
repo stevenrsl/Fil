@@ -36,6 +36,11 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 ## Protocoles
 
 - **Proton Drive et kDrive** : confirmés fonctionnels en usage réel (29 octobre 2026). kDrive : passer à l'API seulement pour une fonction absente ou un écart de performance mesuré.
+- **MEGA : vérifier contre un vrai compte.** Livré le 2026-11-27 sans jamais avoir lancé MEGAcmd : le format de `mega-ls -l --time-format=ISO6081_WITH_TIME`, le nom choisi par `mega-put` vers une destination absente, `mv` vers `//bin` et la sortie de `mega-whoami` viennent de la documentation. Lancer `FIL_TEST_MEGA=1 FIL_TEST_MEGA_EMAIL=… swift test --filter MegaTests`, puis un envoi, un téléchargement, un renommage et une suppression dans Fil.
+- **MEGA : suite.** Code de double authentification dans Fil (aujourd'hui : `mega-login` une fois dans le Terminal). Progression des envois en lisant la sortie de `mega-put` au fil de l'eau. Noms contenant `*` ou `?`, que MEGAcmd peut prendre pour des motifs.
+- **OneDrive, Google Drive : piste native, sans rclone** (écarté le 2026-11-23 : binaire lourd et copies de transit). Aucun des deux ne demande de copie intermédiaire : les fichiers vont directement à leur place, avec reprise.
+  - *OneDrive* : Microsoft Graph par URLSession, OAuth PKCE (`ASWebAuthenticationSession`), jetons dans le trousseau. Téléchargement direct avec `Range`, envoi par session d'envoi en morceaux de 10 Mio, reprenable. Demande une inscription d'application Azure (gratuite, identifiant client public, pas de secret). Le plus simple des trois : à faire en premier.
+  - *Google Drive* : Drive API v3, même OAuth. `alt=media` avec `Range`, envois reprenables. Demande un projet Google Cloud ; la portée `drive` est « restreinte » : app non vérifiée limitée à 100 testeurs avec écran d'avertissement, publication soumise à un audit de sécurité. Drive vit par identifiants, pas par chemins (noms en double possibles) : cache chemin → identifiant, reconstructible.
 - **FTP actif** (`PORT`) : non proposé, seul le passif est utilisé. Ajouter une option si un serveur l'exige (`CURLOPT_FTPPORT`).
 - **Clé SSH par connexion** : aujourd'hui les clés viennent de l'agent et de `~/.ssh/config`. Un champ « clé » éviterait de passer par la configuration.
 
@@ -67,7 +72,8 @@ Ce qui manque, par ordre d'intérêt pour le moment d'usage (3 h du matin : choi
 ## Application
 
 - **Modes graphiques : vérifier à l'écran.** Défaut, Veilleuse et Net (2026-11-22) sont couverts par les tests de contraste et de persistance, pas regardés : bascule depuis les réglages pendant un transfert, ligne choisie du tableau, contrôles natifs (`Picker`, cases) qui gardent peut-être l'accent de macOS, menu « Apparence » sur iOS.
-- **Autres modes** proposés dans `docs/propositions/themes/` (Ardoise, Lin, Mousse, Prune) et un « Défaut AA » qui lèverait les quatre écarts connus de Défaut en clair : décision de DA à prendre.
+- **Défaut AA** (`docs/propositions/themes/`) qui lèverait les quatre écarts connus de Défaut en clair : décision de DA à prendre. Ardoise, Lin, Mousse et Prune sont livrés (2026-11-23), pas encore regardés à l'écran.
+- **Fenêtre sans barre de titre : vérifier à l'écran** (2026-11-23) : feux tricolores sur la barre latérale, déplacement par la bande du haut, plein écran, chaque mode en clair et en sombre.
 - **Préférences séparées** : `swift run Fil` lit le domaine `Fil`, `Fil.app` lit `com.fil.app`. Les favoris ne sont donc pas partagés entre les deux. À unifier quand l'identifiant définitif sera choisi.
 - **Identifiant de bundle définitif** (provisoire : `com.fil.app`). Décision à prendre avant la première distribution : le changer fait perdre les préférences (domaine `com.fil.app`) ; le service Keychain `com.fil.connections` est indépendant et ne bouge pas.
 - **Signature Developer ID et notarisation** : `Tools/release.sh` est écrit mais jamais exécuté de bout en bout. Il faut une identité « Developer ID Application » et un profil `notarytool` (voir `Support/DISTRIBUTION.md`).

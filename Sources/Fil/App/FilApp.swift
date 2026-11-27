@@ -23,6 +23,9 @@ struct FilApp: App {
             RootView(model: delegate.model)
                 .frame(minWidth: 900, minHeight: 600)
         }
+        // La barre de titre se fond dans la page : les feux tricolores flottent sur la barre latérale,
+        // le fond de Fil va jusqu'au bord de la fenêtre.
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1080, height: 720)
         .commands { FilCommands(model: delegate.model) }

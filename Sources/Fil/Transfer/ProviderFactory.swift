@@ -22,6 +22,12 @@ enum ProviderFactory {
             #else
             return PlannedProvider(connection: connection)
             #endif
+        case .mega:
+            #if os(macOS)
+            return MegaProvider(connection: connection, password: password)
+            #else
+            return PlannedProvider(connection: connection)
+            #endif
         }
     }
 }

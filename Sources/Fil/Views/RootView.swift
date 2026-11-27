@@ -13,6 +13,7 @@ struct RootView: View {
         HStack(spacing: 0) {
             SidebarView(model: model)
             Rectangle().fill(Palette.hairline).frame(width: 1)
+                .ignoresSafeArea()
             VStack(spacing: 0) {
                 page
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -23,6 +24,7 @@ struct RootView: View {
             .background(Palette.ground)
         }
         .background(Palette.ground)
+        .background(WindowChrome())
     }
 
     @ViewBuilder

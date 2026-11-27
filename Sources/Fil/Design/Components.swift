@@ -207,7 +207,7 @@ struct ThemePicker: View {
     @Binding var selection: ThemeID
 
     var body: some View {
-        HStack(alignment: .top, spacing: Spacing.regular) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 84, maximum: 84), spacing: Spacing.regular, alignment: .topLeading)], alignment: .leading, spacing: Spacing.regular) {
             ForEach(ThemeID.allCases, id: \.self) { theme in
                 Button { selection = theme } label: { swatch(theme) }
                     .buttonStyle(.plain)

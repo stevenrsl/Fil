@@ -1,7 +1,7 @@
 import Foundation
 
 public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiable {
-    case ftp, ftps, sftp, webdav, kdrive, protonDrive
+    case ftp, ftps, sftp, webdav, kdrive, protonDrive, mega
 
     public var id: Self { self }
 
@@ -13,6 +13,7 @@ public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiabl
         case .webdav: "WebDAV"
         case .kdrive: "kDrive"
         case .protonDrive: "Proton Drive"
+        case .mega: "MEGA"
         }
     }
 
@@ -23,6 +24,9 @@ public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiabl
         case .protonDrive: return "Proton Drive nécessite le CLI officiel, disponible sur macOS mais pas encore sur iPhone et iPad."
         #else
         case .protonDrive: return nil
+        #endif
+        #if os(iOS)
+        case .mega: return "MEGA passe par MEGAcmd, l'outil officiel de MEGA, disponible sur macOS mais pas sur iPhone et iPad."
         #endif
         #if os(iOS)
         // FTP passe par la libcurl de macOS et SFTP par /usr/bin/ssh : ni l'une ni l'autre n'existe sur iOS.
@@ -46,12 +50,15 @@ public enum RemoteProtocol: String, CaseIterable, Codable, Sendable, Identifiabl
     /// Les WebDAV passent l'adresse à la racine WebDAV ; les autres partent du dossier personnel.
     public var pathIsRoot: Bool { self == .webdav || self == .kdrive }
 
+    /// Faux pour les comptes en ligne joints par leur outil officiel (Proton Drive, MEGA) : ni adresse ni port à saisir.
+    public var hasServerAddress: Bool { self != .protonDrive && self != .mega }
+
     public var defaultPort: Int {
         switch self {
         case .ftp, .ftps: 21
         case .sftp: 22
         case .webdav, .kdrive: 443
-        case .protonDrive: 0
+        case .protonDrive, .mega: 0
         }
     }
 }
@@ -109,7 +116,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
 
     /// Adresse réellement contactée. Pour kDrive, un identifiant numérique seul suffit.
     public var resolvedHost: String {
-        if `protocol` == .protonDrive { return "" }
+        if !`protocol`.hasServerAddress { return "" }
         let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
         if `protocol` == .kdrive, !trimmed.isEmpty, trimmed.allSatisfy(\.isASCIIDigit) {
             return "\(trimmed).connect.kdrive.infomaniak.com"
@@ -120,6 +127,7 @@ public struct RemoteConnection: Identifiable, Codable, Hashable, Sendable {
     /// Résumé d'une ligne : « SFTP · steven@exemple.fr:2222 ».
     public var summary: String {
         let host = resolvedHost
+        if !`protocol`.hasServerAddress, !username.isEmpty { return "\(`protocol`.label) · \(username)" }
         guard !host.isEmpty else { return `protocol`.label }
         let user = username.isEmpty ? "" : "\(username)@"
         let port = port == `protocol`.defaultPort ? "" : ":\(port)"

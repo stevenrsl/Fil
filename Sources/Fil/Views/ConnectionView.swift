@@ -78,7 +78,7 @@ struct ConnectionView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                if connection.protocol != .protonDrive {
+                if connection.protocol.hasServerAddress {
                     GridRow {
                         fieldLabel(connection.protocol == .kdrive ? "kDrive" : "Adresse")
                         HStack(spacing: Spacing.regular) {
@@ -94,8 +94,10 @@ struct ConnectionView: View {
                                 .frame(width: 76)
                         }
                     }
+                }
+                if connection.protocol != .protonDrive {
                     GridRow {
-                        fieldLabel(connection.protocol == .kdrive ? "E-mail" : "Utilisateur")
+                        fieldLabel(connection.protocol == .kdrive || connection.protocol == .mega ? "E-mail" : "Utilisateur")
                         TextField(userPlaceholder(connection.protocol), text: binding(id, \.username, connection))
                             .textFieldStyle(FieldStyle())
                     }
@@ -197,6 +199,8 @@ struct ConnectionView: View {
             noteText("Connexion HTTPS. La racine est le chemin WebDAV du serveur, par exemple /remote.php/dav/files/moi pour Nextcloud. Un certificat auto-signé peut être approuvé après vérification de son empreinte.")
         case .kdrive:
             noteText("Indique l'identifiant de ton kDrive (les chiffres de son adresse) et ton e-mail Infomaniak. Avec la double authentification, crée un mot de passe d'application.")
+        case .mega:
+            noteText("Fil passe par MEGAcmd, l'outil officiel de MEGA, à installer depuis mega.io/cmd. Les fichiers restent chiffrés par MEGA ; une suppression les met dans la corbeille de MEGA. Avec la double authentification, connecte-toi une fois dans le Terminal avec mega-login : Fil reprend ensuite la session.")
         case .protonDrive:
             noteText("Fil télécharge et vérifie le CLI officiel Proton Drive à la première connexion. L’authentification se fait dans ton navigateur et la session reste dans le trousseau macOS.")
         }
@@ -216,6 +220,7 @@ struct ConnectionView: View {
         case .webdav: "cloud.exemple.fr"
         case .kdrive: "123456 ou 123456.connect.kdrive.infomaniak.com"
         case .protonDrive: "Aucune adresse : compte Proton Drive"
+        case .mega: "Aucune adresse : compte MEGA"
         }
     }
 
@@ -223,7 +228,7 @@ struct ConnectionView: View {
         switch proto {
         case .ftp, .ftps: "Vide pour une connexion anonyme"
         case .sftp: "Vide pour l'utilisateur de ~/.ssh/config"
-        case .kdrive: "moi@exemple.fr"
+        case .kdrive, .mega: "moi@exemple.fr"
         default: "Identifiant"
         }
     }
@@ -235,11 +240,13 @@ struct ConnectionView: View {
 
     private func pathPlaceholder(_ proto: RemoteProtocol) -> String {
         if proto == .protonDrive { return "/my-files" }
+        if proto == .mega { return "/ (ton espace MEGA)" }
         return proto.pathIsRoot ? "/" : "Dossier personnel"
     }
 
     private func lede(for connection: RemoteConnection) -> String {
         if connection.protocol == .protonDrive { return "Ton Proton Drive, chiffré par le CLI officiel." }
+        if connection.protocol == .mega { return connection.username.isEmpty ? "Ton espace MEGA, par MEGAcmd." : connection.summary }
         return connection.resolvedHost.isEmpty ? "Renseigne le serveur ; Fil s'occupe du reste." : connection.summary
     }
 }

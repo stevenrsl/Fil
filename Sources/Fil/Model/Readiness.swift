@@ -18,8 +18,8 @@ public struct Readiness: Equatable, Sendable {
             reasons.append(unavailable)
         }
         let host = connection.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        if connection.protocol == .protonDrive {
-            // Proton Drive est un compte local authentifié par son CLI : pas d'hôte ni de port réseau à saisir.
+        if !connection.protocol.hasServerAddress {
+            // Proton Drive et MEGA passent par leur outil officiel : pas d'hôte ni de port réseau à saisir.
         } else if host.isEmpty {
             reasons.append(connection.protocol == .kdrive
                 ? "Ajoute l'identifiant de ton kDrive ou son adresse WebDAV."
@@ -27,11 +27,14 @@ public struct Readiness: Equatable, Sendable {
         } else if host.contains(where: \.isWhitespace) {
             reasons.append("L'adresse du serveur ne doit pas contenir d'espace.")
         }
-        if connection.protocol != .protonDrive && !(1...65_535).contains(connection.port) {
+        if connection.protocol.hasServerAddress && !(1...65_535).contains(connection.port) {
             reasons.append("Le port doit être compris entre 1 et \(Format.count(65_535)).")
         }
         if connection.protocol == .kdrive, connection.username.trimmingCharacters(in: .whitespaces).isEmpty {
             reasons.append("Ajoute l'adresse e-mail de ton compte Infomaniak.")
+        }
+        if connection.protocol == .mega, connection.username.trimmingCharacters(in: .whitespaces).isEmpty {
+            reasons.append("Ajoute l'adresse e-mail de ton compte MEGA.")
         }
         return Readiness(reasons: reasons)
     }

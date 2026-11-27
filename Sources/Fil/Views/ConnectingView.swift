@@ -35,6 +35,10 @@ struct ConnectingView: View {
     }
 
     private func phrase(elapsed: TimeInterval) -> String {
+        guard connection.protocol.hasServerAddress else {
+            if elapsed < 4 { return "Ouverture de ton compte \(connection.protocol.label)…" }
+            return "Toujours en attente de \(connection.protocol.label) · \(Format.duration(elapsed))"
+        }
         let host = connection.resolvedHost
         if elapsed < 4 { return "Connexion à \(host) en \(connection.protocol.label)…" }
         return "Toujours en attente de \(host) · \(Format.duration(elapsed))"
@@ -42,6 +46,9 @@ struct ConnectingView: View {
 
     private func hint(elapsed: TimeInterval) -> String? {
         guard elapsed >= 3 else { return nil }
+        if connection.protocol == .mega {
+            return "Au premier appel, MEGAcmd démarre son serveur et charge ton espace : cela peut prendre une minute."
+        }
         if connection.protocol == .sftp {
             return "Si macOS demande l'accès au trousseau pour Fil, autorise-le : c'est ainsi que ssh reçoit le mot de passe."
         }
